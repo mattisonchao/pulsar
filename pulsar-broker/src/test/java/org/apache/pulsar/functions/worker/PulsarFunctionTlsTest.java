@@ -68,15 +68,15 @@ public class PulsarFunctionTlsTest {
 
     protected static final int BROKER_COUNT = 2;
 
-    private final String TLS_SERVER_CERT_FILE_PATH =
+    private static final String TLS_SERVER_CERT_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/server-keys/broker.cert.pem");
-    private final String TLS_SERVER_KEY_FILE_PATH =
+    private static final String TLS_SERVER_KEY_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/server-keys/broker.key-pk8.pem");
-    private final String TLS_CLIENT_CERT_FILE_PATH =
+    private static final String TLS_CLIENT_CERT_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/client-keys/admin.cert.pem");
-    private final String TLS_CLIENT_KEY_FILE_PATH =
+    private static final String TLS_CLIENT_KEY_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/client-keys/admin.key-pk8.pem");
-    private final String CA_CERT_FILE_PATH =
+    private static final String CA_CERT_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/certs/ca.cert.pem");
 
     LocalBookkeeperEnsemble bkEnsemble;
@@ -89,7 +89,9 @@ public class PulsarFunctionTlsTest {
     protected String testCluster = "my-cluster";
     protected String testTenant = "my-tenant";
     protected String testNamespace = testTenant + "/my-ns";
-    private PulsarFunctionTestTemporaryDirectory[] tempDirectories = new PulsarFunctionTestTemporaryDirectory[BROKER_COUNT];
+    private PulsarFunctionTestTemporaryDirectory[] tempDirectories =
+            new PulsarFunctionTestTemporaryDirectory[BROKER_COUNT];
+    @SuppressWarnings({"deprecation", "unchecked"})
 
     @BeforeMethod(alwaysRun = true)
     void setup() throws Exception {
@@ -260,20 +262,22 @@ public class PulsarFunctionTlsTest {
             log.info(" -------- Start test function : {}", functionName);
 
             int finalI = i;
+            // Wait for a leader to be ready and create the function.
+            // The createFunctionWithUrl call is included in the retry loop because a leadership
+            // transition can happen between the leader check and the actual API call, causing
+            // a 503 "Leader not yet ready" error.
+            final PulsarAdmin createAdmin = pulsarAdmins[i];
             Awaitility.await().atMost(1, TimeUnit.MINUTES).pollInterval(1, TimeUnit.SECONDS).untilAsserted(() -> {
                 final PulsarWorkerService workerService = ((PulsarWorkerService) fnWorkerServices[finalI]);
                 final LeaderService leaderService = workerService.getLeaderService();
                 assertNotNull(leaderService);
-                if (leaderService.isLeader()) {
-                    assertTrue(true);
-                } else {
+                if (!leaderService.isLeader()) {
                     final WorkerInfo workerInfo = workerService.getMembershipManager().getLeader();
-                    assertTrue(workerInfo != null && !workerInfo.getWorkerId().equals(workerService.getWorkerConfig().getWorkerId()));
+                    assertTrue(workerInfo != null
+                            && !workerInfo.getWorkerId().equals(workerService.getWorkerConfig().getWorkerId()));
                 }
+                createAdmin.functions().createFunctionWithUrl(functionConfig, jarFilePathUrl);
             });
-            pulsarAdmins[i].functions().createFunctionWithUrl(
-                functionConfig, jarFilePathUrl
-            );
 
             // Function creation is not strongly consistent, so this test can fail with a get that is too eager and
             // does not have retries.
@@ -289,6 +293,7 @@ public class PulsarFunctionTlsTest {
             pulsarAdmins[i].functions().deleteFunction(config.getTenant(), config.getNamespace(), config.getName());
         }
     }
+    @SuppressWarnings("deprecation")
 
     protected static FunctionConfig createFunctionConfig(
         String jarFile,

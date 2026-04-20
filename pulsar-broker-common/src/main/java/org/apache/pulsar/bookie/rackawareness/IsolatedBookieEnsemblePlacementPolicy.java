@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.BKException.BKNotEnoughBookiesException;
 import org.apache.bookkeeper.client.RackawareEnsemblePlacementPolicy;
@@ -57,6 +58,8 @@ public class IsolatedBookieEnsemblePlacementPolicy extends RackawareEnsemblePlac
     // the secondary group.
     private ImmutablePair<Set<String>, Set<String>> defaultIsolationGroups;
 
+    @Getter
+    @VisibleForTesting
     private MetadataCache<BookiesRackConfiguration> bookieMappingCache;
 
     private static final String PULSAR_SYSTEM_TOPIC_ISOLATION_GROUP = "*";
@@ -206,6 +209,9 @@ public class IsolatedBookieEnsemblePlacementPolicy extends RackawareEnsemblePlac
                     return excludedBookies;
                 }
                 Set<String> allGroups = allGroupsBookieMapping.keySet();
+                if (allGroups.isEmpty()) {
+                    return excludedBookies;
+                }
                 int totalAvailableBookiesInPrimaryGroup = 0;
                 Set<String> primaryIsolationGroup = Collections.emptySet();
                 Set<String> secondaryIsolationGroup = Collections.emptySet();
@@ -222,9 +228,10 @@ public class IsolatedBookieEnsemblePlacementPolicy extends RackawareEnsemblePlac
                         }
                     } else {
                         for (String groupBookie : bookiesInGroup) {
-                            totalAvailableBookiesInPrimaryGroup += knownBookies
-                                .containsKey(BookieId.parse(groupBookie)) ? 1 : 0;
-                            primaryGroupBookies.add(BookieId.parse(groupBookie));
+                            BookieId bookieId = BookieId.parse(groupBookie);
+                            if (primaryGroupBookies.add(bookieId)) {
+                                totalAvailableBookiesInPrimaryGroup += knownBookies.containsKey(bookieId) ? 1 : 0;
+                            }
                         }
                     }
                 }
@@ -256,8 +263,9 @@ public class IsolatedBookieEnsemblePlacementPolicy extends RackawareEnsemblePlac
                         Map<String, BookieInfo> bookieGroup = allGroupsBookieMapping.get(group);
                         if (bookieGroup != null && !bookieGroup.isEmpty()) {
                             for (String bookieAddress : bookieGroup.keySet()) {
-                                excludedBookies.remove(BookieId.parse(bookieAddress));
-                                totalAvailableBookiesFromPrimaryAndSecondary += 1;
+                                if (excludedBookies.remove(BookieId.parse(bookieAddress))) {
+                                    totalAvailableBookiesFromPrimaryAndSecondary += 1;
+                                }
                             }
                         }
                     }

@@ -57,13 +57,13 @@ public class ProducerInterceptors implements Closeable {
      * @param message the message from client
      * @return the message to send to topic/partition
      */
-    public Message beforeSend(Producer producer, Message message) {
-        Message interceptorMessage = message;
+    public Message<?> beforeSend(Producer<?> producer, Message<?> message) {
+        Message<?> interceptorMessage = message;
         for (ProducerInterceptor interceptor : interceptors) {
-            if (!interceptor.eligible(message)) {
-                continue;
-            }
             try {
+                if (!interceptor.eligible(message)) {
+                    continue;
+                }
                 interceptorMessage = interceptor.beforeSend(producer, interceptorMessage);
             } catch (Throwable e) {
                 if (producer != null) {
@@ -91,12 +91,12 @@ public class ProducerInterceptors implements Closeable {
      * @param msgId The message id that broker returned. Null if has error occurred.
      * @param exception The exception thrown during processing of this message. Null if no error occurred.
      */
-    public void onSendAcknowledgement(Producer producer, Message message, MessageId msgId, Throwable exception) {
+    public void onSendAcknowledgement(Producer<?> producer, Message<?> message, MessageId msgId, Throwable exception) {
         for (ProducerInterceptor interceptor : interceptors) {
-            if (!interceptor.eligible(message)) {
-                continue;
-            }
             try {
+                if (!interceptor.eligible(message)) {
+                    continue;
+                }
                 interceptor.onSendAcknowledgement(producer, message, msgId, exception);
             } catch (Throwable e) {
                 log.warn("Error executing interceptor onSendAcknowledgement callback ", e);

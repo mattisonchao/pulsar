@@ -85,6 +85,7 @@ public class FileSystemPackagesStorageTest {
         assertEquals(testData, readResult);
     }
 
+    @SuppressWarnings("deprecation")
     @Test(timeOut = 60000)
     public void testReadWriteLargeDataOperations() throws ExecutionException, InterruptedException {
         byte[] data = RandomUtils.nextBytes(8192 * 3 + 4096);
@@ -158,7 +159,7 @@ public class FileSystemPackagesStorageTest {
         storage.deleteAsync(testPath).get();
 
         // list again and not file under the path
-        paths= storage.listAsync("").get();
+        paths = storage.listAsync("").get();
         assertEquals(paths.size(), 0);
 
 

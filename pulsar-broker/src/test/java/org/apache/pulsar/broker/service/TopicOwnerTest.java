@@ -106,7 +106,8 @@ public class TopicOwnerTest {
         leaderAdmin = pulsarAdmins[0];
         Thread.sleep(1000);
 
-        pulsarAdmins[0].clusters().createCluster(testCluster, ClusterData.builder().serviceUrl(pulsarServices[0].getWebServiceAddress()).build());
+        pulsarAdmins[0].clusters().createCluster(testCluster, ClusterData.builder()
+                .serviceUrl(pulsarServices[0].getWebServiceAddress()).build());
         TenantInfo tenantInfo = TenantInfo.builder()
                 .allowedClusters(Sets.newHashSet(testCluster))
                 .build();
@@ -132,7 +133,7 @@ public class TopicOwnerTest {
         }
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"deprecation", "unchecked"})
     @SneakyThrows(IllegalAccessException.class)
     private MutableObject<PulsarService> spyLeaderNamespaceServiceForAuthorizedBroker() {
         // Spy leader namespace service to inject authorized broker for namespace-bundle from leader,
@@ -140,6 +141,7 @@ public class TopicOwnerTest {
         // currently. Namespace-bundle ownership contention is an atomic operation through zookeeper.
         NamespaceService leaderNamespaceService = leaderPulsar.getNamespaceService();
         NamespaceService spyLeaderNamespaceService = spy(leaderNamespaceService);
+        @SuppressWarnings("deprecation")
         final MutableObject<PulsarService> leaderAuthorizedBroker = new MutableObject<>();
         Answer<CompletableFuture<Optional<LookupResult>>> answer = invocation -> {
             PulsarService pulsarService = leaderAuthorizedBroker.getValue();
@@ -154,7 +156,8 @@ public class TopicOwnerTest {
                     true);
             return CompletableFuture.completedFuture(Optional.of(lookupResult));
         };
-        doAnswer(answer).when(spyLeaderNamespaceService).getBrokerServiceUrlAsync(any(TopicName.class), any(LookupOptions.class));
+        doAnswer(answer).when(spyLeaderNamespaceService).getBrokerServiceUrlAsync(any(TopicName.class),
+                any(LookupOptions.class));
         FieldUtils.writeField(leaderPulsar, "nsService", spyLeaderNamespaceService, true);
         return leaderAuthorizedBroker;
     }
@@ -203,7 +206,8 @@ public class TopicOwnerTest {
         String serviceUrlForTopic2 = pulsarAdmins[0].lookups().lookupTopic(topic2);
 
         while (serviceUrlForTopic1.equals(serviceUrlForTopic2)) {
-            // Retry for bundle distribution, should make sure bundles for topic1 and topic2 are maintained in different brokers.
+            // Retry for bundle distribution,
+            // should make sure bundles for topic1 and topic2 are maintained in different brokers.
             pulsarAdmins[0].namespaces().unload("my-tenant/my-ns");
             serviceUrlForTopic1 = pulsarAdmins[0].lookups().lookupTopic(topic1);
             serviceUrlForTopic2 = pulsarAdmins[0].lookups().lookupTopic(topic2);

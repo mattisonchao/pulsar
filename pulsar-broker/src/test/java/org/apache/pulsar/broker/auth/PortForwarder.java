@@ -41,6 +41,7 @@ import org.slf4j.LoggerFactory;
 /**
  * A TCP server that performs port forwarding for test purposes.
  */
+@SuppressWarnings("try")
 public class PortForwarder implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(PortForwarder.class);
@@ -56,6 +57,7 @@ public class PortForwarder implements AutoCloseable {
      * @param listenAddress the local address to listen on.
      * @param targetAddress the remote address to forward traffic to.
      */
+    @SuppressWarnings("try")
     public PortForwarder(SocketAddress listenAddress, SocketAddress targetAddress) {
         this.targetAddress = targetAddress;
         this.bossGroup = new NioEventLoopGroup(1);
@@ -71,7 +73,7 @@ public class PortForwarder implements AutoCloseable {
                     .bind(listenAddress).sync().channel();
 
             LOG.info("Started port forwarding service on {}, target: {}", listenAddress, targetAddress);
-        } catch(Exception e) {
+        } catch (Exception e) {
             throw new RuntimeException(String.format("failed to bind to %s: %s", listenAddress, e.getMessage()), e);
         }
     }

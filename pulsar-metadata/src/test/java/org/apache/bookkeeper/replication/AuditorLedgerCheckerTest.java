@@ -121,12 +121,13 @@ public class AuditorLedgerCheckerTest extends BookKeeperClusterTestCase {
                 + ledgerManagerFactoryClass);
         this.digestType = DigestType.CRC32;
         Class.forName("org.apache.pulsar.metadata.bookkeeper.PulsarMetadataClientDriver");
-        Class.forName("org.apache.pulsar.metadata.bookkeeper.PulsarMetadataBookieDriver");        // set ledger manager name
+        Class.forName("org.apache.pulsar.metadata.bookkeeper.PulsarMetadataBookieDriver"); // set ledger manager name
         baseConf.setLedgerManagerFactoryClassName(ledgerManagerFactoryClass);
         baseClientConf
                 .setLedgerManagerFactoryClassName(ledgerManagerFactoryClass);
     }
 
+    @SuppressWarnings("deprecation")
     @BeforeMethod
     public void setUp() throws Exception {
         super.setUp();

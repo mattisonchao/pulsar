@@ -100,30 +100,35 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
     static final int TIME_TO_CHECK_BACKLOG_QUOTA = 5;
 
     // PEM
-    protected final String brokerCertFilePath = Resources.getResource("certificate-authority/server-keys/broker.cert.pem").getPath();
-    protected final String brokerFilePath = Resources.getResource("certificate-authority/server-keys/broker.key-pk8.pem").getPath();
-    protected final String clientCertFilePath = Resources.getResource("certificate-authority/client-keys/admin.cert.pem").getPath();
-    protected final String clientKeyFilePath = Resources.getResource("certificate-authority/client-keys/admin.key-pk8.pem").getPath();
-    protected final String caCertFilePath = Resources.getResource("certificate-authority/certs/ca.cert.pem").getPath();
+    protected final String brokerCertFilePath =
+            Resources.getResource("certificate-authority/server-keys/broker.cert.pem").getPath();
+    protected final String brokerFilePath =
+            Resources.getResource("certificate-authority/server-keys/broker.key-pk8.pem").getPath();
+    protected final String clientCertFilePath =
+            Resources.getResource("certificate-authority/client-keys/admin.cert.pem").getPath();
+    protected final String clientKeyFilePath =
+            Resources.getResource("certificate-authority/client-keys/admin.key-pk8.pem").getPath();
+    protected final String caCertFilePath =
+            Resources.getResource("certificate-authority/certs/ca.cert.pem").getPath();
 
     // KEYSTORE
     protected boolean tlsWithKeyStore = false;
-    protected final static String brokerKeyStorePath =
+    protected final String brokerKeyStorePath =
             Resources.getResource("certificate-authority/jks/broker.keystore.jks").getPath();
-    protected final static String brokerTrustStorePath =
+    protected final String brokerTrustStorePath =
             Resources.getResource("certificate-authority/jks/broker.truststore.jks").getPath();
-    protected final static String clientKeyStorePath =
+    protected final String clientKeyStorePath =
             Resources.getResource("certificate-authority/jks/client.keystore.jks").getPath();
-    protected final static String clientTrustStorePath =
+    protected final String clientTrustStorePath =
             Resources.getResource("certificate-authority/jks/client.truststore.jks").getPath();
-    protected final static String keyStoreType = "JKS";
-    protected final static String keyStorePassword = "111111";
+    protected final String keyStoreType = "JKS";
+    protected final String keyStorePassword = "111111";
 
     protected final String cluster1 = "r1";
     protected final String cluster2 = "r2";
     protected final String cluster3 = "r3";
     protected final String cluster4 = "r4";
-    protected String loadManagerClassName;
+    protected String loadManagerClassName = "org.apache.pulsar.broker.loadbalance.impl.SimpleLoadManagerImpl";
 
     protected String getLoadManagerClassName() {
         return loadManagerClassName;
@@ -282,9 +287,17 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
                 .brokerClientTlsTrustStoreType(keyStoreType)
                 .build());
 
+        // Remove r4 from existing namespace replication clusters before shrinking the tenant,
+        // since canUpdateCluster validation prevents removing a cluster that namespaces still reference.
+        Set<String> targetClusters = Sets.newHashSet("r1", "r2", "r3");
+        if (admin1.tenants().getTenants().contains("pulsar")) {
+            for (String ns : admin1.namespaces().getNamespaces("pulsar")) {
+                admin1.namespaces().setNamespaceReplicationClusters(ns, targetClusters, false);
+            }
+        }
         updateTenantInfo("pulsar",
                 new TenantInfoImpl(Sets.newHashSet("appid1", "appid2", "appid3"),
-                        Sets.newHashSet("r1", "r2", "r3")));
+                        targetClusters));
         admin1.namespaces().createNamespace("pulsar/ns", Sets.newHashSet("r1", "r2", "r3"));
         admin1.namespaces().createNamespace("pulsar/ns1", Sets.newHashSet("r1", "r2"));
 
@@ -306,13 +319,7 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
         assertEquals(admin2.clusters().getCluster(cluster3).getBrokerServiceUrlTls(), pulsar3.getBrokerServiceUrlTls());
         assertEquals(admin2.clusters().getCluster(cluster4).getBrokerServiceUrlTls(), pulsar4.getBrokerServiceUrlTls());
 
-        // Also create V1 namespace for compatibility check
-        admin1.clusters().createCluster("global", ClusterData.builder()
-                .serviceUrl("http://global:8080")
-                .serviceUrlTls("https://global:8443")
-                .build());
-        admin1.namespaces().createNamespace("pulsar/global/ns");
-        admin1.namespaces().setNamespaceReplicationClusters("pulsar/global/ns", Sets.newHashSet(cluster1, cluster2, cluster3));
+
 
         Thread.sleep(100);
         log.info("--- ReplicatorTestBase::setup completed ---");
@@ -327,6 +334,7 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
                 BrokerOpenTelemetryTestUtil.getOpenTelemetrySdkBuilderConsumer(metricReader));
     }
 
+    @SuppressWarnings("deprecation")
     public void setConfig3DefaultValue() {
         setConfigDefaults(config3, cluster3, bkEnsemble3);
         config3.setTlsEnabled(true);
@@ -484,6 +492,7 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
         resetConfig3();
         resetConfig4();
     }
+    @SuppressWarnings("deprecation")
 
     protected void updateTenantInfo(String tenant, TenantInfoImpl tenantInfo) throws Exception {
         if (!admin1.tenants().getTenants().contains(tenant)) {
@@ -500,6 +509,7 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
         PulsarClient client;
         Producer<byte[]> producer;
 
+        @SuppressWarnings("deprecation")
         MessageProducer(URL url, final TopicName dest) throws Exception {
             this.url = url;
             this.namespace = dest.getNamespace();
@@ -517,6 +527,7 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
             }
         }
 
+        @SuppressWarnings("deprecation")
         MessageProducer(URL url, final TopicName dest, boolean batch) throws Exception {
             this.url = url;
             this.namespace = dest.getNamespace();
@@ -589,6 +600,7 @@ public abstract class ReplicatorTestBase extends TestRetrySupport {
             this(url, dest, "sub-id");
         }
 
+        @SuppressWarnings("deprecation")
         MessageConsumer(URL url, final TopicName dest, String subId) throws Exception {
             this.url = url;
             this.namespace = dest.getNamespace();

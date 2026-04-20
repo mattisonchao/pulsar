@@ -56,13 +56,14 @@ import org.apache.pulsar.common.policies.data.TransactionPendingAckInternalStats
 import org.apache.pulsar.common.policies.data.TransactionPendingAckStats;
 import org.apache.pulsar.common.stats.PositionInPendingAckStats;
 import org.apache.pulsar.common.util.FutureUtil;
-import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @Path("/transactions")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Api(value = "/transactions", description = "Transactions admin apis", tags = "transactions")
 @Slf4j
+@SuppressWarnings("deprecation")
 public class Transactions extends TransactionsBase {
 
     @GET

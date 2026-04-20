@@ -32,6 +32,7 @@ import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.MessageCrypto;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Range;
+import org.apache.pulsar.client.api.ReaderDecryptFailListener;
 import org.apache.pulsar.client.api.ReaderInterceptor;
 import org.apache.pulsar.client.api.ReaderListener;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
@@ -74,6 +75,12 @@ public class ReaderConfigurationData<T> implements Serializable, Cloneable {
     private ReaderListener<T> readerListener;
 
     @ApiModelProperty(
+            name = "readerDecryptFailListener",
+            value = "A listener that is called for encrypted message received and decrypt fail."
+    )
+    private ReaderDecryptFailListener<T> readerDecryptFailListener;
+
+    @ApiModelProperty(
             name = "readerName",
             value = "Reader name"
     )
@@ -112,11 +119,13 @@ public class ReaderConfigurationData<T> implements Serializable, Cloneable {
                     + "\n"
                     + "Delivered encrypted message contains {@link EncryptionContext} which contains encryption and "
                     + "compression information in it using which application can decrypt consumed message payload."
+                    + "cannot set with {@link ReaderDecryptFailListener}, and if ReaderDecryptFailListener are set,\n"
+                    + "application should responsible for handling decryption failure."
     )
-    private ConsumerCryptoFailureAction cryptoFailureAction = ConsumerCryptoFailureAction.FAIL;
+    private ConsumerCryptoFailureAction cryptoFailureAction;
 
     @JsonIgnore
-    private transient MessageCrypto messageCrypto = null;
+    private transient MessageCrypto<?, ?> messageCrypto = null;
 
     @ApiModelProperty(
             name = "readCompacted",
@@ -144,7 +153,7 @@ public class ReaderConfigurationData<T> implements Serializable, Cloneable {
     )
     private boolean resetIncludeHead = false;
 
-    private transient List<Range> keyHashRanges;
+    private List<Range> keyHashRanges;
 
     private boolean poolMessages = false;
 
@@ -191,12 +200,12 @@ public class ReaderConfigurationData<T> implements Serializable, Cloneable {
     }
 
     @SuppressFBWarnings({"EI_EXPOSE_REP"})
-    public MessageCrypto getMessageCrypto() {
+    public MessageCrypto<?, ?> getMessageCrypto() {
         return messageCrypto;
     }
 
     @SuppressFBWarnings({"EI_EXPOSE_REP2"})
-    public void setMessageCrypto(MessageCrypto messageCrypto) {
+    public void setMessageCrypto(MessageCrypto<?, ?> messageCrypto) {
         this.messageCrypto = messageCrypto;
     }
 }

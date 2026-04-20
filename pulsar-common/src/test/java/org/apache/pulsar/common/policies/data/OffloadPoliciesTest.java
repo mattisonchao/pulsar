@@ -20,6 +20,7 @@ package org.apache.pulsar.common.policies.data;
 
 import static org.apache.pulsar.common.policies.data.OffloadPoliciesImpl.EXTRA_CONFIG_PREFIX;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNull;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -39,8 +40,8 @@ import org.testng.annotations.Test;
  */
 public class OffloadPoliciesTest {
 
-    private final int M = 1024 * 1024;
-    private final long MIN = 1000 * 60;
+    private static final int M = 1024 * 1024;
+    private static final long MIN = 1000 * 60;
 
     private final String offloadersDirectory = "./test-offloader-directory";
     private final Integer managedLedgerOffloadMaxThreads = 10;
@@ -202,7 +203,8 @@ public class OffloadPoliciesTest {
         Assert.assertEquals(offloadPolicies.getOffloadersDirectory(), offloadersDirectory);
         Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadDriver(), driver);
         Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadMaxThreads(), managedLedgerOffloadMaxThreads);
-        Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadPrefetchRounds(), managedLedgerOffloadPrefetchRounds);
+        Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadPrefetchRounds(),
+                managedLedgerOffloadPrefetchRounds);
         Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadThresholdInBytes(), offloadThresholdInBytes);
         Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadThresholdInSeconds(), offloadThresholdInSeconds);
         Assert.assertEquals(offloadPolicies.getManagedLedgerOffloadDeletionLagInMillis(), offloadDeletionLagInMillis);
@@ -368,7 +370,8 @@ public class OffloadPoliciesTest {
         brokerProperties.setProperty("managedLedgerOffloadDeletionLagInMillis", "" + (brokerDeletionLag));
         brokerProperties.setProperty("managedLedgerOffloadedReadPriority", "" + (brokerReadPriority));
         // 2.2 offload properties name in conf file
-        brokerProperties.setProperty("managedLedgerOffloadAutoTriggerSizeThresholdBytes", "" + brokerOffloadThreshold + 30);
+        brokerProperties.setProperty("managedLedgerOffloadAutoTriggerSizeThresholdBytes", ""
+                + brokerOffloadThreshold + 30);
         brokerProperties.setProperty("managedLedgerOffloadDeletionLagMs", "" + brokerDeletionLag + 30);
         brokerProperties.setProperty("managedLedgerDataReadPriority", "" + "tiered-storage-first");
         offloadPolicies = OffloadPoliciesImpl.create(brokerProperties);
@@ -409,9 +412,17 @@ public class OffloadPoliciesTest {
         }
 
         private Class<?> getClass(String name) {
-            String file = name.replace('.', File.separatorChar) + ".class";
-            Path targetPath = Paths.get(getClass().getClassLoader().getResource(".").getPath()).getParent();
-            file = Paths.get(targetPath.toString(), "classes", file).toString();
+            String classFile = name.replace('.', File.separatorChar) + ".class";
+            Path testClassesDir = Paths.get(getClass().getClassLoader().getResource(".").getPath());
+            Path mainClassesDir;
+            if (testClassesDir.endsWith(Paths.get("classes", "java", "test"))) {
+                // Gradle layout: build/classes/java/test -> build/classes/java/main
+                mainClassesDir = testClassesDir.getParent().resolve("main");
+            } else {
+                // Maven layout: target/test-classes -> target/classes
+                mainClassesDir = testClassesDir.getParent().resolve("classes");
+            }
+            String file = mainClassesDir.resolve(classFile).toString();
             byte[] byteArr = null;
             try {
                 byteArr = loadClassData(file);
@@ -469,7 +480,16 @@ public class OffloadPoliciesTest {
         Map<String, String> extraConfiguration = new HashMap<>();
         extraConfiguration.put("key1", "value1");
         extraConfiguration.put("key2", "value2");
-        offloadPolicies.setManagedLedgerExtraConfigurations(extraConfiguration); 
+        offloadPolicies.setManagedLedgerExtraConfigurations(extraConfiguration);
         assertEquals(offloadPolicies, OffloadPoliciesImpl.create(offloadPolicies.toProperties()));
+    }
+
+    @Test
+    public void testDefaultOffloadPolicies() {
+        OffloadPoliciesImpl offloadPolicies = new OffloadPoliciesImpl();
+        assertNull(offloadPolicies.getManagedLedgerOffloadedReadPriority());
+        assertNull(offloadPolicies.getManagedLedgerOffloadDeletionLagInMillis());
+        assertNull(offloadPolicies.getManagedLedgerOffloadThresholdInSeconds());
+        assertNull(offloadPolicies.getManagedLedgerOffloadThresholdInBytes());
     }
 }

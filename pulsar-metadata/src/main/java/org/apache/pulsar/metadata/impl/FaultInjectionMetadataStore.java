@@ -95,6 +95,16 @@ public class FaultInjectionMetadataStore implements MetadataStoreExtended {
     }
 
     @Override
+    public CompletableFuture<List<String>> getChildrenFromStore(String path) {
+        Optional<MetadataStoreException> ex = programmedFailure(OperationType.GET_CHILDREN, path);
+        if (ex.isPresent()) {
+            return FutureUtil.failedFuture(ex.get());
+        }
+
+        return store.getChildrenFromStore(path);
+    }
+
+    @Override
     public CompletableFuture<Boolean> exists(String path) {
         Optional<MetadataStoreException> ex = programmedFailure(OperationType.EXISTS, path);
         if (ex.isPresent()) {
@@ -151,17 +161,19 @@ public class FaultInjectionMetadataStore implements MetadataStoreExtended {
     }
 
     @Override
-    public <T> MetadataCache<T> getMetadataCache(Class<T> clazz, MetadataCacheConfig cacheConfig) {
+    public <T> MetadataCache<T> getMetadataCache(Class<T> clazz, MetadataCacheConfig<?> cacheConfig) {
         return injectMetadataStoreInMetadataCache(store.getMetadataCache(clazz, cacheConfig));
     }
 
     @Override
-    public <T> MetadataCache<T> getMetadataCache(TypeReference<T> typeRef, MetadataCacheConfig cacheConfig) {
+    public <T> MetadataCache<T> getMetadataCache(TypeReference<T> typeRef, MetadataCacheConfig<?> cacheConfig) {
         return injectMetadataStoreInMetadataCache(store.getMetadataCache(typeRef, cacheConfig));
     }
 
+    @SuppressWarnings("deprecation")
     @Override
-    public <T> MetadataCache<T> getMetadataCache(MetadataSerde<T> serde, MetadataCacheConfig cacheConfig) {
+    public <T> MetadataCache<T> getMetadataCache(String cacheName, MetadataSerde<T> serde,
+                                                 MetadataCacheConfig<?> cacheConfig) {
         return injectMetadataStoreInMetadataCache(store.getMetadataCache(serde, cacheConfig));
     }
 

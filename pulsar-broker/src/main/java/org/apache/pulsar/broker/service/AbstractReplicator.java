@@ -20,19 +20,20 @@ package org.apache.pulsar.broker.service;
 
 import com.google.common.annotations.VisibleForTesting;
 import io.opentelemetry.api.common.Attributes;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import lombok.Getter;
 import org.apache.bookkeeper.mledger.Position;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.service.BrokerServiceException.NamingException;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicBusyException;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
+import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.api.MessageRoutingMode;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
@@ -57,25 +58,26 @@ public abstract class AbstractReplicator implements Replicator {
     protected final String remoteCluster;
     protected final PulsarClientImpl replicationClient;
     protected final PulsarClientImpl client;
+    protected final PulsarAdmin replicationAdmin;
+    protected final PulsarAdmin admin;
     protected String replicatorId;
     @Getter
     protected final Topic localTopic;
-
+    @VisibleForTesting
+    @Getter
     protected volatile ProducerImpl producer;
     public static final String REPL_PRODUCER_NAME_DELIMITER = "-->";
 
     protected final int producerQueueSize;
     protected final ProducerBuilder<byte[]> producerBuilder;
 
-    protected final Backoff backOff = new Backoff(100, TimeUnit.MILLISECONDS, 1, TimeUnit.MINUTES, 0,
-            TimeUnit.MILLISECONDS);
+    protected final Backoff backOff = Backoff.create();
 
     protected final String replicatorPrefix;
 
     protected static final AtomicReferenceFieldUpdater<AbstractReplicator, State> STATE_UPDATER =
             AtomicReferenceFieldUpdater.newUpdater(AbstractReplicator.class, State.class, "state");
     @VisibleForTesting
-    @Getter
     protected volatile State state = State.Disconnected;
 
     private volatile Attributes attributes = null;
@@ -105,8 +107,10 @@ public abstract class AbstractReplicator implements Replicator {
         Terminated;
     }
 
+    @SuppressWarnings("deprecation")
     public AbstractReplicator(String localCluster, Topic localTopic, String remoteCluster, String remoteTopicName,
-                              String replicatorPrefix, BrokerService brokerService, PulsarClientImpl replicationClient)
+                              String replicatorPrefix, BrokerService brokerService, PulsarClientImpl replicationClient,
+                              PulsarAdmin replicationAdmin)
             throws PulsarServerException {
         this.brokerService = brokerService;
         this.localTopic = localTopic;
@@ -116,13 +120,15 @@ public abstract class AbstractReplicator implements Replicator {
         this.remoteTopicName = remoteTopicName;
         this.remoteCluster = StringInterner.intern(remoteCluster);
         this.replicationClient = replicationClient;
+        this.replicationAdmin = replicationAdmin;
         this.client = (PulsarClientImpl) brokerService.pulsar().getClient();
+        this.admin = brokerService.pulsar().getAdminClient();
         this.producer = null;
         this.producerQueueSize = brokerService.pulsar().getConfiguration().getReplicationProducerQueueSize();
         this.replicatorId = String.format("%s | %s",
-                StringUtils.equals(localTopicName, remoteTopicName) ? localTopicName :
+                Objects.equals(localTopicName, remoteTopicName) ? localTopicName :
                         localTopicName + "-->" + remoteTopicName,
-                StringUtils.equals(localCluster, remoteCluster) ? localCluster : localCluster + "-->" + remoteCluster
+                Objects.equals(localCluster, remoteCluster) ? localCluster : localCluster + "-->" + remoteCluster
         );
         this.producerBuilder = replicationClient.newProducer(Schema.AUTO_PRODUCE_BYTES()) //
                 .topic(remoteTopicName)
@@ -195,13 +201,14 @@ public abstract class AbstractReplicator implements Replicator {
         prepareCreateProducer().thenCompose(ignore -> {
             ProducerBuilderImpl builderImpl = (ProducerBuilderImpl) producerBuilder;
             builderImpl.getConf().setNonPartitionedTopicExpected(true);
+            builderImpl.getConf().setReplProducer(true);
             return producerBuilder.createAsync().thenAccept(producer -> {
                 setProducerAndTriggerReadEntries(producer);
             });
         }).exceptionally(ex -> {
             Pair<Boolean, State> setDisconnectedRes = compareSetAndGetState(State.Starting, State.Disconnected);
             if (setDisconnectedRes.getLeft()) {
-                long waitTimeMs = backOff.next();
+                long waitTimeMs = backOff.next().toMillis();
                 log.warn("[{}] Failed to create remote producer ({}), retrying in {} s",
                         replicatorId, ex.getMessage(), waitTimeMs / 1000.0);
                 // BackOff before retrying
@@ -230,7 +237,7 @@ public abstract class AbstractReplicator implements Replicator {
      * If we start a producer immediately, we will get a conflict producer(same name producer) registered error.
      */
     protected void delayStartProducerAfterDisconnected() {
-        long waitTimeMs = backOff.next();
+        long waitTimeMs = backOff.next().toMillis();
         if (log.isDebugEnabled()) {
             log.debug(
                     "[{}] waiting for producer to close before attempting to reconnect, retrying in {} s",
@@ -304,9 +311,10 @@ public abstract class AbstractReplicator implements Replicator {
     /**
      * This method only be used by {@link PersistentTopic#checkGC} now.
      */
-    public CompletableFuture<Void> disconnect(boolean failIfHasBacklog, boolean closeTheStartingProducer) {
+    @Override
+    public CompletableFuture<Void> disconnect() {
         long backlog = getNumberOfEntriesInBacklog();
-        if (failIfHasBacklog && backlog > 0) {
+        if (backlog > 0) {
             CompletableFuture<Void> disconnectFuture = new CompletableFuture<>();
             disconnectFuture.completeExceptionally(new TopicBusyException("Cannot close a replicator with backlog"));
             if (log.isDebugEnabled()) {
@@ -316,12 +324,34 @@ public abstract class AbstractReplicator implements Replicator {
         }
         log.info("[{}] Disconnect replicator at position {} with backlog {}", replicatorId,
                 getReplicatorReadPosition(), backlog);
-        return closeProducerAsync(closeTheStartingProducer);
+        return beforeDisconnect()
+            .thenCompose(__ -> closeProducerAsync(true))
+            .thenApply(__ -> {
+                afterDisconnected();
+                return null;
+            });
     }
+
+    /**
+     * This method and {@link #afterDisconnected()} are used to solve the following race condition:
+     * - Thread 1: calling disconnect.
+     *             passed the check: no backlog.
+     * - Thread 2: published a message, then the cursor.pendingRead completes.
+     * - Thread 1: continue to disconnect.
+     * - Thread 2: read entries from the cursor, and try to send messages, but the messages will be discarded because
+     *             the producer is closed.
+     * Issue: the pending reading's read position is not correct.
+     */
+    protected CompletableFuture<Void> beforeDisconnect() {
+        return CompletableFuture.completedFuture(null);
+    }
+
+    protected void afterDisconnected() {}
 
     /**
      * This method only be used by {@link PersistentTopic#checkGC} now.
      */
+    @SuppressWarnings("unchecked")
     protected CompletableFuture<Void> closeProducerAsync(boolean closeTheStartingProducer) {
         Pair<Boolean, State> setDisconnectingRes = compareSetAndGetState(State.Started, State.Disconnecting);
         if (!setDisconnectingRes.getLeft()) {
@@ -334,7 +364,7 @@ public abstract class AbstractReplicator implements Replicator {
                      *   Nit: The better solution is creating a {@link CompletableFuture} to trace the in-progress
                      *     creation and call "inProgressCreationFuture.thenApply(closeProducer())".
                      */
-                    long waitTimeMs = backOff.next();
+                    long waitTimeMs = backOff.next().toMillis();
                     brokerService.executor().schedule(() -> closeProducerAsync(true),
                             waitTimeMs, TimeUnit.MILLISECONDS);
                 } else {
@@ -385,7 +415,7 @@ public abstract class AbstractReplicator implements Replicator {
         return future.thenRun(() -> {
             actionAfterClosed.run();
         }).exceptionally(ex -> {
-            long waitTimeMs = backOff.next();
+            long waitTimeMs = backOff.next().toMillis();
             log.warn(
                     "[{}] Exception: '{}' occurred while trying to close the producer. Replicator state: {}."
                             + " Retrying again in {} s.",
@@ -397,12 +427,16 @@ public abstract class AbstractReplicator implements Replicator {
         });
     }
 
+    protected abstract void beforeTerminate();
+
+    @SuppressWarnings("unchecked")
     public CompletableFuture<Void> terminate() {
         if (!tryChangeStatusToTerminating()) {
             log.info("[{}] Skip current termination since other thread is doing termination, state : {}", replicatorId,
                     state);
             return CompletableFuture.completedFuture(null);
         }
+        beforeTerminate();
         return doCloseProducerAsync(producer, () -> {
             STATE_UPDATER.set(this, State.Terminated);
             this.producer = null;
@@ -455,7 +489,7 @@ public abstract class AbstractReplicator implements Replicator {
      *
      * <pre>
      * eg:
-     * if topic : persistent://prop/cluster/ns/my-topic is a partitioned topic with 2 partitions then
+     * if topic : persistent://prop/ns/my-topic is a partitioned topic with 2 partitions then
      * broker explicitly creates replicator producer for: "my-topic-partition-1" and "my-topic-partition-2".
      *
      * However, if broker tries to start producer with root topic "my-topic" then client-lib internally

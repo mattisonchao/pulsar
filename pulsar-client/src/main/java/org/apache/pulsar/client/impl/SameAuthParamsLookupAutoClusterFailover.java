@@ -71,29 +71,36 @@ public class SameAuthParamsLookupAutoClusterFailover implements ServiceUrlProvid
         this.executor = EventLoopUtil.newEventLoopGroup(1, false,
                 new ExecutorProvider.ExtendedThreadFactory("broker-service-url-check"));
         scheduledCheckTask = executor.scheduleAtFixedRate(() -> {
-            if (closed) {
-                return;
-            }
-            checkPulsarServices();
-            int firstHealthyPulsarService = firstHealthyPulsarService();
-            if (firstHealthyPulsarService == currentPulsarServiceIndex) {
-                return;
-            }
-            if (firstHealthyPulsarService < 0) {
-                int failoverTo = findFailoverTo();
-                if (failoverTo < 0) {
-                    // No healthy pulsar service to connect.
-                    log.error("Failed to choose a pulsar service to connect, no one pulsar service is healthy. Current"
-                            + " pulsar service: [{}] {}. States: {}, Counters: {}", currentPulsarServiceIndex,
-                            pulsarServiceUrlArray[currentPulsarServiceIndex], Arrays.toString(pulsarServiceStateArray),
-                            Arrays.toString(checkCounterArray));
-                } else {
-                    // Failover to low priority pulsar service.
-                    updateServiceUrl(failoverTo);
+            try {
+                if (closed) {
+                    return;
                 }
-            } else {
-                // Back to high priority pulsar service.
-                updateServiceUrl(firstHealthyPulsarService);
+                checkPulsarServices();
+                int firstHealthyPulsarService = firstHealthyPulsarService();
+                if (firstHealthyPulsarService == currentPulsarServiceIndex) {
+                    return;
+                }
+                if (firstHealthyPulsarService < 0) {
+                    int failoverTo = findFailoverTo();
+                    if (failoverTo < 0) {
+                        // No healthy pulsar service to connect.
+                        log.error(
+                                "Failed to choose a pulsar service to connect, no one pulsar service is healthy."
+                                        + " Current pulsar service: [{}] {}. States: {}, Counters: {}",
+                                currentPulsarServiceIndex,
+                                pulsarServiceUrlArray[currentPulsarServiceIndex],
+                                Arrays.toString(pulsarServiceStateArray),
+                                Arrays.toString(checkCounterArray));
+                    } else {
+                        // Failover to low priority pulsar service.
+                        updateServiceUrl(failoverTo);
+                    }
+                } else {
+                    // Back to high priority pulsar service.
+                    updateServiceUrl(firstHealthyPulsarService);
+                }
+            } catch (Exception ex) {
+                log.error("Failed to re-check cluster status", ex);
             }
         }, checkHealthyIntervalMs, checkHealthyIntervalMs, TimeUnit.MILLISECONDS);
     }
@@ -103,13 +110,24 @@ public class SameAuthParamsLookupAutoClusterFailover implements ServiceUrlProvid
         return pulsarServiceUrlArray[currentPulsarServiceIndex];
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void close() throws Exception {
+        if (closed) {
+            return;
+        }
+
         log.info("Closing service url provider. Current pulsar service: [{}] {}", currentPulsarServiceIndex,
                 pulsarServiceUrlArray[currentPulsarServiceIndex]);
+        if (scheduledCheckTask != null) {
+            scheduledCheckTask.cancel(false);
+        }
+
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+
         closed = true;
-        scheduledCheckTask.cancel(false);
-        executor.shutdownNow();
     }
 
     private int firstHealthyPulsarService() {
@@ -123,9 +141,14 @@ public class SameAuthParamsLookupAutoClusterFailover implements ServiceUrlProvid
     }
 
     private int findFailoverTo() {
-        for (int i = currentPulsarServiceIndex + 1; i <= pulsarServiceUrlArray.length; i++) {
+        for (int i = currentPulsarServiceIndex + 1; i < pulsarServiceUrlArray.length; i++) {
             if (probeAvailable(i)) {
                 return i;
+            } else {
+                // Mark the service as Failed to prevent a spurious recovery to it
+                // after we failover to a higher-indexed service.
+                pulsarServiceStateArray[i] = PulsarServiceState.Failed;
+                checkCounterArray[i].setValue(0);
             }
         }
         return -1;
@@ -149,8 +172,8 @@ public class SameAuthParamsLookupAutoClusterFailover implements ServiceUrlProvid
                         break;
                     }
                     case PreRecover: {
-                        checkCounterArray[i].setValue(checkCounterArray[i].getValue() + 1);
-                        if (checkCounterArray[i].getValue() >= recoverThreshold) {
+                        checkCounterArray[i].setValue(checkCounterArray[i].intValue() + 1);
+                        if (checkCounterArray[i].intValue() >= recoverThreshold) {
                             pulsarServiceStateArray[i] = PulsarServiceState.Healthy;
                             checkCounterArray[i].setValue(0);
                         }
@@ -165,8 +188,8 @@ public class SameAuthParamsLookupAutoClusterFailover implements ServiceUrlProvid
                         break;
                     }
                     case PreFail: {
-                        checkCounterArray[i].setValue(checkCounterArray[i].getValue() + 1);
-                        if (checkCounterArray[i].getValue() >= failoverThreshold) {
+                        checkCounterArray[i].setValue(checkCounterArray[i].intValue() + 1);
+                        if (checkCounterArray[i].intValue() >= failoverThreshold) {
                             pulsarServiceStateArray[i] = PulsarServiceState.Failed;
                             checkCounterArray[i].setValue(0);
                         }

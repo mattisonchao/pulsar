@@ -64,10 +64,14 @@ public class TopicsAuthTest extends MockedPulsarServiceBaseTest {
     private final String testTenant = "my-tenant";
     private final String testNamespace = "my-namespace";
     private final String testTopicName = "my-topic";
+@SuppressWarnings("deprecation")
 
     private static final SecretKey SECRET_KEY = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
+    @SuppressWarnings("deprecation")
     private static final String ADMIN_TOKEN = Jwts.builder().setSubject("admin").signWith(SECRET_KEY).compact();
+    @SuppressWarnings("deprecation")
     private static final String PRODUCE_TOKEN = Jwts.builder().setSubject("producer").signWith(SECRET_KEY).compact();
+    @SuppressWarnings("deprecation")
     private static final String CONSUME_TOKEN = Jwts.builder().setSubject("consumer").signWith(SECRET_KEY).compact();
 
     @Override
@@ -142,12 +146,12 @@ public class TopicsAuthTest extends MockedPulsarServiceBaseTest {
     private void innerTestProduce(String createTopicName, boolean isPersistent, boolean isPartition,
                                   String token, int status) throws Exception {
         String topicPrefix = null;
-        if (isPersistent == true) {
+        if (isPersistent) {
             topicPrefix = "persistent";
         } else {
             topicPrefix = "non-persistent";
         }
-        if (isPartition == true) {
+        if (isPartition) {
             admin.topics().createPartitionedTopic(topicPrefix + "://" + testTenant + "/"
                     + testNamespace + "/" + createTopicName, 5);
         } else {
@@ -160,14 +164,14 @@ public class TopicsAuthTest extends MockedPulsarServiceBaseTest {
                 writeValueAsString(schema.getSchemaInfo()));
         producerMessages.setValueSchema(ObjectMapperFactory.getMapper().getObjectMapper().
                 writeValueAsString(schema.getSchemaInfo()));
-        String message = "[" +
-                "{\"key\":\"my-key\",\"payload\":\"RestProducer:1\",\"eventTime\":1603045262772,\"sequenceId\":1}," +
-                "{\"key\":\"my-key\",\"payload\":\"RestProducer:2\",\"eventTime\":1603045262772,\"sequenceId\":2}]";
+        String message = "["
+                + "{\"key\":\"my-key\",\"payload\":\"RestProducer:1\",\"eventTime\":1603045262772,\"sequenceId\":1},"
+                + "{\"key\":\"my-key\",\"payload\":\"RestProducer:2\",\"eventTime\":1603045262772,\"sequenceId\":2}]";
         producerMessages.setMessages(createMessages(message));
 
         WebTarget root = buildWebClient();
         String requestPath = null;
-        if (isPartition == true) {
+        if (isPartition) {
             requestPath = "/topics/" + topicPrefix + "/" + testTenant + "/" + testNamespace + "/"
                     + createTopicName + "/partitions/2";
         } else {

@@ -18,6 +18,8 @@
  */
 package org.apache.pulsar.proxy.server;
 
+import static org.mockito.Mockito.doReturn;
+import java.util.Optional;
 import lombok.Cleanup;
 import org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest;
 import org.apache.pulsar.broker.authentication.AuthenticationService;
@@ -40,10 +42,6 @@ import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
-import java.util.Optional;
-
-import static org.mockito.Mockito.doReturn;
-
 public class ProxyEnableHAProxyProtocolTest extends MockedPulsarServiceBaseTest {
 
     private static final Logger log = LoggerFactory.getLogger(ProxyEnableHAProxyProtocolTest.class);
@@ -57,6 +55,7 @@ public class ProxyEnableHAProxyProtocolTest extends MockedPulsarServiceBaseTest 
     protected void setup() throws Exception {
         conf.setHaProxyProtocolEnabled(true);
         internalSetup();
+        setupDefaultTenantAndNamespace();
 
         proxyConfig.setServicePort(Optional.ofNullable(0));
         proxyConfig.setBrokerProxyAllowedTargetPorts("*");
@@ -95,13 +94,13 @@ public class ProxyEnableHAProxyProtocolTest extends MockedPulsarServiceBaseTest 
         PulsarClient client = PulsarClient.builder().serviceUrl(proxyService.getServiceUrl())
                 .build();
 
-        final String topicName = "persistent://sample/test/local/testSimpleProduceAndConsume";
+        final String topicName = "persistent://public/default/testSimpleProduceAndConsume";
         final String subName = "my-subscriber-name";
         final int messages = 100;
 
         @Cleanup
-        org.apache.pulsar.client.api.Consumer<byte[]> consumer = client.newConsumer().topic(topicName).subscriptionName(subName)
-                .subscribe();
+        org.apache.pulsar.client.api.Consumer<byte[]> consumer =
+                client.newConsumer().topic(topicName).subscriptionName(subName).subscribe();
 
         @Cleanup
         org.apache.pulsar.client.api.Producer<byte[]> producer = client.newProducer().topic(topicName).create();
@@ -122,11 +121,13 @@ public class ProxyEnableHAProxyProtocolTest extends MockedPulsarServiceBaseTest 
         SubscriptionStats subscriptionStats = topicStats.getSubscriptions().get(subName);
         Assert.assertEquals(subscriptionStats.getConsumers().size(), 1);
         Assert.assertEquals(subscriptionStats.getConsumers().get(0).getAddress(),
-                ((ConsumerImpl) consumer).getClientCnx().ctx().channel().localAddress().toString().replaceFirst("/", ""));
+                ((ConsumerImpl) consumer).getClientCnx().ctx().channel().localAddress().toString()
+                        .replaceFirst("/", ""));
 
         topicStats = admin.topics().getStats(topicName);
         Assert.assertEquals(topicStats.getPublishers().size(), 1);
         Assert.assertEquals(topicStats.getPublishers().get(0).getAddress(),
-                ((ProducerImpl) producer).getClientCnx().ctx().channel().localAddress().toString().replaceFirst("/", ""));
+                ((ProducerImpl) producer).getClientCnx().ctx().channel().localAddress().toString()
+                        .replaceFirst("/", ""));
     }
 }

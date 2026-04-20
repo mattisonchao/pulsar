@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar;
 
-import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -34,7 +33,7 @@ import org.apache.bookkeeper.mledger.impl.ManagedLedgerFactoryImpl;
 import org.apache.pulsar.broker.resources.NamespaceResources;
 import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.broker.resources.TenantResources;
-import org.apache.pulsar.broker.service.schema.SchemaStorageFormat.SchemaLocator;
+import org.apache.pulsar.broker.service.schema.SchemaLocator;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.TenantInfo;
@@ -222,9 +221,18 @@ public class PulsarClusterMetadataTeardown {
             if (log.isDebugEnabled()) {
                 log.debug("Delete ledger id: {}", ledgerId);
             }
-        } catch (InterruptedException | BKException e) {
-            log.error("Failed to delete ledger {}: {}", ledgerId, e);
-            throw new RuntimeException(e);
+        } catch (InterruptedException | BKException ex) {
+            if (ex instanceof BKException bkException) {
+                switch (bkException.getCode()) {
+                    case BKException.Code.NoSuchLedgerExistsException:
+                    case BKException.Code.NoSuchLedgerExistsOnMetadataServerException:
+                        log.warn("Failed to delete deleted ledger. ledgerId={} errorCode={}",
+                                ledgerId, bkException.getCode());
+                        return;
+                }
+            }
+            log.error("Failed to delete ledger {}: {}", ledgerId, ex);
+            throw new RuntimeException(ex);
         }
     }
 
@@ -256,11 +264,13 @@ public class PulsarClusterMetadataTeardown {
                 metadataStore.getChildren(namespaceRoot).join().forEach(topic -> {
                     final String topicRoot = namespaceRoot + "/" + topic;
                     try {
-                        SchemaLocator.parseFrom(metadataStore.get(topicRoot).join().get().getValue())
-                                .getIndexList().stream()
-                                .map(indexEntry -> indexEntry.getPosition().getLedgerId())
-                                .forEach(ledgerId -> deleteLedger(bookKeeper, ledgerId));
-                    } catch (InvalidProtocolBufferException e) {
+                        byte[] data = metadataStore.get(topicRoot).join().get().getValue();
+                        SchemaLocator locator = new SchemaLocator();
+                        locator.parseFrom(data);
+                        for (int i = 0; i < locator.getIndexsCount(); i++) {
+                            deleteLedger(bookKeeper, locator.getIndexAt(i).getPosition().getLedgerId());
+                        }
+                    } catch (Exception e) {
                         log.warn("Invalid data format from {}: {}", topicRoot, e);
                     }
                 });

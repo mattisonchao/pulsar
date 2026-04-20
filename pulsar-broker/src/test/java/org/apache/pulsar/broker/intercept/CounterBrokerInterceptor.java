@@ -175,11 +175,13 @@ public class CounterBrokerInterceptor implements BrokerInterceptor {
         messageDispatchCount.incrementAndGet();
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void messageAcked(ServerCnx cnx, Consumer consumer,
                               CommandAck ack) {
         messageAckCount.incrementAndGet();
     }
+    @SuppressWarnings("deprecation")
 
     @Override
     public void beforeSendMessage(Subscription subscription,
@@ -214,7 +216,7 @@ public class CounterBrokerInterceptor implements BrokerInterceptor {
         if (command.getType().equals(BaseCommand.Type.ACK)) {
             handleAckCount.incrementAndGet();
         }
-        if(command.getType().equals(BaseCommand.Type.REDELIVER_UNACKNOWLEDGED_MESSAGES)) {
+        if (command.getType().equals(BaseCommand.Type.REDELIVER_UNACKNOWLEDGED_MESSAGES)) {
             handleNackCount.incrementAndGet();
         }
         count.incrementAndGet();
@@ -252,7 +254,11 @@ public class CounterBrokerInterceptor implements BrokerInterceptor {
         }
         if (response instanceof Response) {
             Response res = (Response) response;
-            responseList.add(new ResponseEvent(res.getHttpChannel().getRequest().getRequestURI(), res.getStatus()));
+            responseList.add(new ResponseEvent(res.getRequest().getHttpURI().getPath(), res.getStatus()));
+        } else if (response instanceof org.eclipse.jetty.ee8.nested.Response) {
+            org.eclipse.jetty.ee8.nested.Response res = (org.eclipse.jetty.ee8.nested.Response) response;
+            responseList.add(
+                    new ResponseEvent(res.getHttpChannel().getRequest().getHttpURI().getPath(), res.getStatus()));
         }
     }
 
@@ -271,7 +277,7 @@ public class CounterBrokerInterceptor implements BrokerInterceptor {
 
     @Override
     public void txnEnded(String txnID, long txnAction) {
-        if(txnAction == TxnAction.COMMIT_VALUE) {
+        if (txnAction == TxnAction.COMMIT_VALUE) {
             committedTxnCount.incrementAndGet();
         } else {
             abortedTxnCount.incrementAndGet();

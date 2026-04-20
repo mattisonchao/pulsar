@@ -19,26 +19,29 @@
 package org.apache.pulsar.metadata.impl.oxia;
 
 import io.opentelemetry.api.OpenTelemetry;
-import io.streamnative.oxia.client.api.AsyncOxiaClient;
-import io.streamnative.oxia.client.api.DeleteOption;
-import io.streamnative.oxia.client.api.Notification;
-import io.streamnative.oxia.client.api.OxiaClientBuilder;
-import io.streamnative.oxia.client.api.PutOption;
-import io.streamnative.oxia.client.api.PutResult;
-import io.streamnative.oxia.client.api.Version;
-import io.streamnative.oxia.client.api.exceptions.KeyAlreadyExistsException;
-import io.streamnative.oxia.client.api.exceptions.UnexpectedVersionIdException;
+import io.oxia.client.api.AsyncOxiaClient;
+import io.oxia.client.api.Notification;
+import io.oxia.client.api.OxiaClientBuilder;
+import io.oxia.client.api.PutResult;
+import io.oxia.client.api.Version;
+import io.oxia.client.api.exceptions.KeyAlreadyExistsException;
+import io.oxia.client.api.exceptions.UnexpectedVersionIdException;
+import io.oxia.client.api.options.DeleteOption;
+import io.oxia.client.api.options.ListOption;
+import io.oxia.client.api.options.PutOption;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Predicate;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -61,7 +64,7 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
     private Optional<MetadataEventSynchronizer> synchronizer;
 
     public OxiaMetadataStore(AsyncOxiaClient oxia, String identity) {
-        super("oxia-metadata", OpenTelemetry.noop());
+        super("oxia-metadata", OpenTelemetry.noop(), null, 1);
         this.client = oxia;
         this.identity = identity;
         this.synchronizer = Optional.empty();
@@ -74,7 +77,8 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
             MetadataStoreConfig metadataStoreConfig,
             boolean enableSessionWatcher)
             throws Exception {
-        super("oxia-metadata", Objects.requireNonNull(metadataStoreConfig).getOpenTelemetry());
+        super("oxia-metadata", Objects.requireNonNull(metadataStoreConfig).getOpenTelemetry(),
+                metadataStoreConfig.getNodeSizeStats(), metadataStoreConfig.getNumSerDesThreads());
 
         var linger = metadataStoreConfig.getBatchingMaxDelayMillis();
         if (!metadataStoreConfig.isBatchingEnabled()) {
@@ -120,19 +124,19 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
                             NotificationType.Deleted, keyDeleted.key()));
             notifyParentChildrenChanged(keyDeleted.key());
         } else {
-            log.error("Unknown notification type {}", notification);
+            log.warn("Unknown notification type {}", notification);
         }
     }
 
     Optional<GetResult> convertGetResult(
-            String path, io.streamnative.oxia.client.api.GetResult result) {
+            String path, io.oxia.client.api.GetResult result) {
         if (result == null) {
             return Optional.empty();
         }
         return Optional.of(result)
                 .map(
                         oxiaResult ->
-                                new GetResult(oxiaResult.getValue(), convertStat(path, oxiaResult.getVersion())));
+                                new GetResult(oxiaResult.value(), convertStat(path, oxiaResult.version())));
     }
 
     Stat convertStat(String path, Version version) {
@@ -147,8 +151,8 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
     }
 
     @Override
-    protected CompletableFuture<List<String>> getChildrenFromStore(String path) {
-        var pathWithSlash = path + "/";
+    public CompletableFuture<List<String>> getChildrenFromStore(String path) {
+        var pathWithSlash = path.endsWith("/") ? path : path + "/";
 
         return client
                 .list(pathWithSlash, pathWithSlash + "/")
@@ -202,6 +206,39 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
     @Override
     protected CompletableFuture<Stat> storePut(
             String path, byte[] data, Optional<Long> optExpectedVersion, EnumSet<CreateOption> options) {
+        return doStorePut(path, data, optExpectedVersion, options, Collections.emptyMap());
+    }
+
+    @Override
+    protected CompletableFuture<Stat> storePut(
+            String path, byte[] data, Optional<Long> optExpectedVersion, EnumSet<CreateOption> options,
+            Map<String, String> secondaryIndexes) {
+        return doStorePut(path, data, optExpectedVersion, options, secondaryIndexes);
+    }
+
+    @Override
+    protected CompletableFuture<List<GetResult>> storeFindByIndex(
+            String scanPathPrefix, String indexName, String secondaryKey,
+            Predicate<GetResult> fallbackFilter) {
+        String scopedKey = scanPathPrefix + "/" + secondaryKey;
+        return client.list(scopedKey, scopedKey + "~", Set.of(ListOption.UseIndex(indexName)))
+                .thenCompose(primaryKeys -> {
+                    List<CompletableFuture<Optional<GetResult>>> futures = primaryKeys.stream()
+                            .map(this::storeGet)
+                            .toList();
+                    return FutureUtil.waitForAll(futures)
+                            .thenApply(__ -> futures.stream()
+                                    .map(CompletableFuture::join)
+                                    .filter(Optional::isPresent)
+                                    .map(Optional::get)
+                                    .toList());
+                })
+                .exceptionallyCompose(this::convertException);
+    }
+
+    private CompletableFuture<Stat> doStorePut(
+            String path, byte[] data, Optional<Long> optExpectedVersion, EnumSet<CreateOption> options,
+            Map<String, String> secondaryIndexes) {
         CompletableFuture<Void> parentsCreated = createParents(path);
         return parentsCreated.thenCompose(
                 __ -> {
@@ -241,6 +278,12 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
                     if (options.contains(CreateOption.Ephemeral)) {
                         putOptions.add(PutOption.AsEphemeralRecord);
                     }
+                    var parentPath = parent(path);
+                    var parentPrefix = parentPath == null ? "" : parentPath;
+                    secondaryIndexes.forEach((indexName, secondaryKey) ->
+                            putOptions.add(PutOption.SecondaryIndex(indexName,
+                                    parentPrefix + "/" + secondaryKey)));
+
                     return actualPath
                             .thenCompose(
                                     aPath ->
@@ -297,10 +340,12 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
 
     @Override
     public void close() throws Exception {
-        if (client != null) {
-            client.close();
+        if (isClosed.compareAndSet(false, true)) {
+            if (client != null) {
+                client.close();
+            }
+            super.close();
         }
-        super.close();
     }
 
     public Optional<MetadataEventSynchronizer> getMetadataEventSynchronizer() {

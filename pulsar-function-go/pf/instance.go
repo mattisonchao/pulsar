@@ -77,6 +77,15 @@ func newGoInstance() *goInstance {
 		return producer
 	}
 
+	goInstance.context.outputMessageWithError = func(topic string) (pulsar.Producer, error) {
+		producer, err := goInstance.getProducer(topic)
+		if err != nil {
+			log.Errorf("getting producer failed, error is:%v", err)
+			return nil, err
+		}
+		return producer, nil
+	}
+
 	goInstance.lastHealthCheckTS = now.UnixNano()
 	goInstance.properties = make(map[string]string)
 	goInstance.stats = NewStatWithLabelValues(goInstance.getMetricsLabels()...)
@@ -156,7 +165,7 @@ CLOSE:
 			msgInput := cm.Message
 			atMostOnce := gi.context.instanceConf.funcDetails.ProcessingGuarantees == pb.ProcessingGuarantees_ATMOST_ONCE
 			atLeastOnce := gi.context.instanceConf.funcDetails.ProcessingGuarantees == pb.ProcessingGuarantees_ATLEAST_ONCE
-			autoAck := gi.context.instanceConf.funcDetails.AutoAck
+			autoAck := gi.context.instanceConf.funcDetails.AutoAck //nolint:staticcheck
 			if autoAck && atMostOnce {
 				gi.ackInputMessage(msgInput)
 			}
@@ -242,13 +251,12 @@ func (gi *goInstance) setupProducer() error {
 		log.Debugf("Setting up producer for topic %s", gi.context.instanceConf.funcDetails.Sink.Topic)
 		producer, err := gi.getProducer(gi.context.instanceConf.funcDetails.Sink.Topic)
 		if err != nil {
-			log.Fatal(err)
+			log.Errorf("Failed to create producer: %v", err)
+			return fmt.Errorf("failed to create producer: %w", err)
 		}
 
 		gi.producer = producer
-		return nil
 	}
-
 	return nil
 }
 
@@ -396,7 +404,7 @@ func (gi *goInstance) handlerMsg(input pulsar.Message) (output []byte, err error
 
 func (gi *goInstance) processResult(msgInput pulsar.Message, output []byte) {
 	atLeastOnce := gi.context.instanceConf.funcDetails.ProcessingGuarantees == pb.ProcessingGuarantees_ATLEAST_ONCE
-	autoAck := gi.context.instanceConf.funcDetails.AutoAck
+	autoAck := gi.context.instanceConf.funcDetails.AutoAck //nolint:staticcheck
 
 	// If the function had an output and the user has specified an output topic, the output needs to be sent to the
 	// assigned output topic.
@@ -638,7 +646,7 @@ func (gi *goInstance) getFilteredMetricFamilies(metricName string) []*prometheus
 	filteredMetricFamilies := filter(metricFamilies, matchFamilyFunc)
 	if len(filteredMetricFamilies) > 1 {
 		// handle this.
-		log.Errorf("Too many metric families for metricName: %s " + metricName)
+		log.Errorf("Too many metric families for metricName: %s ", metricName)
 	}
 	return filteredMetricFamilies
 }

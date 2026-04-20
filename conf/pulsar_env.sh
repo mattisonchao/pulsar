@@ -67,7 +67,7 @@ done
 # Garbage collection options
 if [ -z "$PULSAR_GC" ]; then
   PULSAR_GC="-XX:+PerfDisableSharedMem -XX:+AlwaysPreTouch"
-  if [[ $JAVA_MAJOR_VERSION -ge 21 ]]; then
+  if [[ $JAVA_MAJOR_VERSION -eq 21 || $JAVA_MAJOR_VERSION -eq 22 ]]; then
     PULSAR_GC="-XX:+UseZGC -XX:+ZGenerational ${PULSAR_GC}"
   else
     PULSAR_GC="-XX:+UseZGC ${PULSAR_GC}"
@@ -88,9 +88,6 @@ if [[ -z "$PULSAR_GC_LOG" ]]; then
     PULSAR_GC_LOG="-Xloggc:${PULSAR_GC_LOG_DIR}/pulsar_gc_%p.log -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=20M"
   fi
 fi
-
-# Extra options to be passed to the jvm
-PULSAR_EXTRA_OPTS="${PULSAR_EXTRA_OPTS:-" -Dpulsar.allocator.exit_on_oom=true -Dio.netty.recycler.maxCapacityPerThread=4096"}"
 
 # Add extra paths to the bookkeeper classpath
 # PULSAR_EXTRA_CLASSPATH=

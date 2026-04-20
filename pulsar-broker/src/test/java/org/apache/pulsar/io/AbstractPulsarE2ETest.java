@@ -30,6 +30,7 @@ import com.google.common.collect.Sets;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
@@ -75,42 +76,43 @@ import org.testng.annotations.Test;
 
 public abstract class AbstractPulsarE2ETest {
 
-	public static final Logger log = LoggerFactory.getLogger(AbstractPulsarE2ETest.class);
+    public static final Logger LOG = LoggerFactory.getLogger(AbstractPulsarE2ETest.class);
 
-    protected final String TLS_SERVER_CERT_FILE_PATH =
+    protected static final String TLS_SERVER_CERT_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/server-keys/broker.cert.pem");
-    protected final String TLS_SERVER_KEY_FILE_PATH =
+    protected static final String TLS_SERVER_KEY_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/server-keys/broker.key-pk8.pem");
-    protected final String TLS_CLIENT_CERT_FILE_PATH =
+    protected static final String TLS_CLIENT_CERT_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/client-keys/admin.cert.pem");
-    protected final String TLS_CLIENT_KEY_FILE_PATH =
+    protected static final String TLS_CLIENT_KEY_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/client-keys/admin.key-pk8.pem");
-    protected final String TLS_TRUST_CERT_FILE_PATH =
+    protected static final String TLS_TRUST_CERT_FILE_PATH =
             ResourceUtils.getAbsolutePath("certificate-authority/certs/ca.cert.pem");
     protected final String tenant = "external-repl-prop";
 
-	protected LocalBookkeeperEnsemble bkEnsemble;
-	protected ServiceConfiguration config;
-	protected WorkerConfig workerConfig;
-	protected PulsarService pulsar;
-	protected PulsarAdmin admin;
-	protected PulsarClient pulsarClient;
-	protected BrokerStats brokerStatsClient;
-	protected PulsarWorkerService functionsWorkerService;
-	protected String pulsarFunctionsNamespace = tenant + "/pulsar-function-admin";
-	protected String primaryHost;
-	protected String workerId;
-	protected PulsarFunctionTestTemporaryDirectory tempDirectory;
+    protected LocalBookkeeperEnsemble bkEnsemble;
+    protected ServiceConfiguration config;
+    protected WorkerConfig workerConfig;
+    protected PulsarService pulsar;
+    protected PulsarAdmin admin;
+    protected PulsarClient pulsarClient;
+    protected BrokerStats brokerStatsClient;
+    protected PulsarWorkerService functionsWorkerService;
+    protected String pulsarFunctionsNamespace = tenant + "/pulsar-function-admin";
+    protected String primaryHost;
+    protected String workerId;
+    protected PulsarFunctionTestTemporaryDirectory tempDirectory;
     protected FileServer fileServer;
 
     @DataProvider(name = "validRoleName")
     public Object[][] validRoleName() {
         return new Object[][] { { Boolean.TRUE }, { Boolean.FALSE } };
     }
+    @SuppressWarnings("deprecation")
 
     @BeforeMethod(alwaysRun = true)
     public void setup(Method method) throws Exception {
-        log.info("--- Setting up method {} ---", method.getName());
+        LOG.info("--- Setting up method {} ---", method.getName());
 
         // Start local bookkeeper ensemble
         bkEnsemble = new LocalBookkeeperEnsemble(3, 0, () -> 0);
@@ -237,7 +239,7 @@ public abstract class AbstractPulsarE2ETest {
 
     @AfterMethod(alwaysRun = true)
     void shutdown() throws Exception {
-        log.info("--- Shutting down ---");
+        LOG.info("--- Shutting down ---");
         try {
             if (fileServer != null) {
                 fileServer.stop();
@@ -274,8 +276,10 @@ public abstract class AbstractPulsarE2ETest {
             }
         }
     }
+    @SuppressWarnings({"deprecation", "unchecked"})
 
-    private PulsarWorkerService createPulsarFunctionWorker(ServiceConfiguration config) throws IOException {
+    private PulsarWorkerService createPulsarFunctionWorker(ServiceConfiguration config)
+            throws IOException, URISyntaxException {
 
         System.setProperty(JAVA_INSTANCE_JAR_PROPERTY,
                 FutureUtil.class.getProtectionDomain().getCodeSource().getLocation().getPath());
@@ -287,9 +291,8 @@ public abstract class AbstractPulsarE2ETest {
         workerConfig.setSchedulerClassName(
                 org.apache.pulsar.functions.worker.scheduler.RoundRobinScheduler.class.getName());
         workerConfig.setFunctionRuntimeFactoryClassName(ThreadRuntimeFactory.class.getName());
-        workerConfig.setFunctionRuntimeFactoryConfigs(
-                ObjectMapperFactory.getMapper().getObjectMapper()
-                        .convertValue(new ThreadRuntimeFactoryConfig().setThreadGroupName("use"), Map.class));        // worker talks to local broker
+        workerConfig.setFunctionRuntimeFactoryConfigs(ObjectMapperFactory.getMapper().getObjectMapper().convertValue(
+                new ThreadRuntimeFactoryConfig().setThreadGroupName("use"), Map.class)); // worker talks to local broker
         workerConfig.setFailureCheckFreqMs(100);
         workerConfig.setNumFunctionPackageReplicas(1);
         workerConfig.setClusterCoordinationTopicName("coordinate");
@@ -313,8 +316,25 @@ public abstract class AbstractPulsarE2ETest {
         workerConfig.setAuthenticationEnabled(true);
         workerConfig.setAuthorizationEnabled(true);
 
-        List<String> urlPatterns =
-                List.of(getPulsarApiExamplesJar().getParentFile().toURI() + ".*", "http://127\\.0\\.0\\.1:.*");
+        // Allow test class directories, examples JAR/NAR directories, and IO NAR directories
+        // as valid function/connector package URLs
+        String testClassesUri = AbstractPulsarE2ETest.class.getProtectionDomain()
+                .getCodeSource().getLocation().toURI().toString();
+        List<String> urlPatterns = new java.util.ArrayList<>(List.of(
+                getPulsarApiExamplesJar().getParentFile().toURI() + ".*",
+                "http://127\\.0\\.0\\.1:.*",
+                tempDirectory.getTempDirectory().toURI() + ".*",
+                testClassesUri + ".*"));
+        // Also allow NAR file directories (may differ from JAR directory in Gradle builds)
+        if (getPulsarApiExamplesNar().getParentFile() != null) {
+            urlPatterns.add(getPulsarApiExamplesNar().getParentFile().toURI() + ".*");
+        }
+        if (getPulsarIODataGeneratorNar().getParentFile() != null) {
+            urlPatterns.add(getPulsarIODataGeneratorNar().getParentFile().toURI() + ".*");
+        }
+        if (getPulsarIOBatchDataGeneratorNar().getParentFile() != null) {
+            urlPatterns.add(getPulsarIOBatchDataGeneratorNar().getParentFile().toURI() + ".*");
+        }
         workerConfig.setAdditionalEnabledConnectorUrlPatterns(urlPatterns);
         workerConfig.setAdditionalEnabledFunctionsUrlPatterns(urlPatterns);
 

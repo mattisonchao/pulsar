@@ -22,7 +22,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.client.impl.conf.ProducerConfigurationData.DEFAULT_MAX_PENDING_MESSAGES;
 import static org.apache.pulsar.client.impl.conf.ProducerConfigurationData.DEFAULT_MAX_PENDING_MESSAGES_ACROSS_PARTITIONS;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableList;
 import io.netty.util.Timeout;
 import io.netty.util.TimerTask;
 import java.util.Collection;
@@ -327,7 +326,7 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
         }
 
         AtomicReference<Throwable> closeFail = new AtomicReference<Throwable>();
-        AtomicInteger completed = new AtomicInteger((int) producers.size());
+        AtomicInteger completed = new AtomicInteger(producers.size());
         CompletableFuture<Void> closeFuture = new CompletableFuture<>();
         for (Producer<T> producer : producers.values()) {
             if (producer != null) {
@@ -390,7 +389,7 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
                 return future;
             }
 
-            client.getPartitionsForTopic(topic).thenCompose(list -> {
+            client.getPartitionsForTopic(topic, false).thenCompose(list -> {
                 int oldPartitionNumber = topicMetadata.numPartitions();
                 int currentPartitionNumber = list.size();
 
@@ -437,7 +436,7 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
                                     // error happened, remove
                                     log.warn("[{}] fail create producers for extended partitions. old: {}, new: {}",
                                             topic, oldPartitionNumber, currentPartitionNumber);
-                                    IntStream.range(oldPartitionNumber, (int) producers.size())
+                                    IntStream.range(oldPartitionNumber, producers.size())
                                             .forEach(i -> producers.remove(i).closeAsync());
                                     future.completeExceptionally(ex);
                                     return null;
@@ -477,7 +476,7 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
                 // if last auto update not completed yet, do nothing.
                 if (partitionsAutoUpdateFuture == null || partitionsAutoUpdateFuture.isDone()) {
                     partitionsAutoUpdateFuture =
-                            topicsPartitionChangedListener.onTopicsExtended(ImmutableList.of(topic));
+                            topicsPartitionChangedListener.onTopicsExtended(List.of(topic));
                 }
             } catch (Throwable th) {
                 log.warn("Encountered error in partition auto update timer task for partition producer."

@@ -129,7 +129,8 @@ public class TransactionClientConnectTest extends TransactionTestBase {
     @Test
     public void testTransactionAddPublishPartitionToTxnReconnect() throws Exception {
         TransactionCoordinatorClientImpl transactionCoordinatorClient = ((PulsarClientImpl) pulsarClient).getTcClient();
-        Callable<CompletableFuture<?>> callable = () -> transactionCoordinatorClient.addPublishPartitionToTxnAsync(new TxnID(0, 0),
+        Callable<CompletableFuture<?>> callable =
+                () -> transactionCoordinatorClient.addPublishPartitionToTxnAsync(new TxnID(0, 0),
                 Collections.singletonList("test"));
         tryCommandReconnect(callable, callable);
     }
@@ -212,6 +213,7 @@ public class TransactionClientConnectTest extends TransactionTestBase {
                 .get(TransactionCoordinatorID.get(0))).getManagedLedger(), ManagedLedgerImpl.State.LedgerOpened);
     }
 
+    @SuppressWarnings("unchecked")
     public void waitToReady() throws Exception{
         TransactionMetadataStoreService transactionMetadataStoreService =
                 getPulsarServiceList().get(0).getTransactionMetadataStoreService();

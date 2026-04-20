@@ -32,13 +32,13 @@ import org.apache.pulsar.common.api.proto.CommandAuthChallenge;
 import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.netty.NettyChannelUtil;
 
-@Slf4j
 /**
  * Channel handler for Pulsar proxy's Pulsar broker client connections for lookup requests.
  * <p>
  * Please see {@link org.apache.pulsar.common.protocol.PulsarDecoder} javadoc for important details about handle*
  * method parameter instance lifecycle.
  */
+@Slf4j
 public class ProxyClientCnx extends ClientCnx {
     private final boolean forwardClientAuthData;
     private final String clientAuthMethod;
@@ -73,7 +73,7 @@ public class ProxyClientCnx extends ClientCnx {
         AuthData authData = authenticationDataProvider.authenticate(AuthData.INIT_AUTH_DATA);
         return Commands.newConnect(authentication.getAuthMethodName(), authData, protocolVersion,
                 proxyConnection.clientVersion, proxyToTargetBrokerAddress, clientAuthRole, clientAuthData,
-                clientAuthMethod, PulsarVersion.getVersion());
+                clientAuthMethod, PulsarVersion.getVersion(), null);
     }
 
     @Override

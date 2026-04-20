@@ -61,6 +61,7 @@ public class ThresholdShedderTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     public void testCleanCache() throws Exception {
         testBrokerReachThreshold();
         Field field = ThresholdShedder.class.getDeclaredField("brokerAvgResourceUsage");
@@ -166,7 +167,7 @@ public class ThresholdShedderTest {
     public void testBrokerWithMultipleBundles() {
         int numBundles = 10;
         LoadData loadData = new LoadData();
-        
+
         LocalBrokerData broker1 = new LocalBrokerData();
         broker1.setBandwidthIn(new ResourceUsage(999, 1000));
         broker1.setBandwidthOut(new ResourceUsage(999, 1000));

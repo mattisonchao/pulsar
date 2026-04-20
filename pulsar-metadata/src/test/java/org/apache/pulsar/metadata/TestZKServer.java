@@ -39,6 +39,7 @@ import org.apache.zookeeper.server.embedded.ZooKeeperServerEmbedded;
 import org.assertj.core.util.Files;
 
 @Slf4j
+@SuppressWarnings("try")
 public class TestZKServer implements AutoCloseable {
 
     public static final int TICK_TIME = 1000;
@@ -90,7 +91,8 @@ public class TestZKServer implements AutoCloseable {
 
     @SneakyThrows
     private static ContainerManager getContainerManager(ZooKeeperServerMain zooKeeperServerMain) {
-        ContainerManager containerManager = readField(ZooKeeperServerMain.class, "containerManager", zooKeeperServerMain);
+        ContainerManager containerManager = readField(ZooKeeperServerMain.class,
+                "containerManager", zooKeeperServerMain);
         return containerManager;
     }
 
@@ -101,8 +103,9 @@ public class TestZKServer implements AutoCloseable {
         return zkServer;
     }
 
+    @SuppressWarnings({"deprecation", "unchecked"})
     @SneakyThrows
-    private static <T> T readField(Class clazz, String field, Object object) {
+    private static <T> T readField(Class<?> clazz, String field, Object object) {
         Field declaredField = clazz.getDeclaredField(field);
         boolean accessible = declaredField.isAccessible();
         if (!accessible) {

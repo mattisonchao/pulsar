@@ -361,6 +361,7 @@ public class LoadSimulationController extends CmdBase{
     }
 
     // Handle the command line arguments associated with the copy command.
+    @SuppressWarnings("unchecked")
     private void handleCopy(final ShellArguments arguments) throws Exception {
         final List<String> commandArguments = arguments.commandArguments;
         // Copy accepts 3 application arguments: Tenant name, source ZooKeeper and target ZooKeeper connect strings.
@@ -443,6 +444,7 @@ public class LoadSimulationController extends CmdBase{
     }
 
     // Handle the command line arguments associated with the simulate command.
+    @SuppressWarnings("unchecked")
     private void handleSimulate(final ShellArguments arguments) throws Exception {
         final List<String> commandArguments = arguments.commandArguments;
         checkAppArgs(commandArguments.size() - 1, 1);
@@ -523,7 +525,7 @@ public class LoadSimulationController extends CmdBase{
             // This controller will now stream rate changes from the given ZK.
             // Users wishing to stop this should Ctrl + C and use another
             // Controller to send new commands.
-            while (true) {}
+            Thread.currentThread().join();
         }
     }
 
@@ -638,14 +640,13 @@ public class LoadSimulationController extends CmdBase{
                     final List<String> commandArguments = arguments.commandArguments;
                     checkAppArgs(commandArguments.size() - 1, 1);
                     final String scriptName = commandArguments.get(1);
-                    final BufferedReader scriptReader = new BufferedReader(
-                            new InputStreamReader(new FileInputStream(Paths.get(scriptName).toFile())));
-                    String line = scriptReader.readLine();
-                    while (line != null) {
-                        read(line.split("\\s+"));
-                        line = scriptReader.readLine();
+                    try (BufferedReader scriptReader = new BufferedReader(
+                            new InputStreamReader(new FileInputStream(Paths.get(scriptName).toFile())))) {
+                        String line;
+                        while ((line = scriptReader.readLine()) != null) {
+                            read(line.split("\\s+"));
+                        }
                     }
-                    scriptReader.close();
                     break;
                 case "copy":
                     handleCopy(arguments);
@@ -677,7 +678,7 @@ public class LoadSimulationController extends CmdBase{
      */
     public void start() throws Exception {
         BufferedReader inReader = new BufferedReader(new InputStreamReader(System.in));
-        while (true) {
+        while (!Thread.currentThread().isInterrupted()) {
             // Print the very simple prompt.
             System.out.println();
             System.out.print("> ");

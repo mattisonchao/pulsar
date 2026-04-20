@@ -40,6 +40,8 @@ import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.AuthAction;
 import org.apache.pulsar.common.policies.data.AuthPolicies;
+import org.apache.pulsar.common.policies.data.BrokerOperation;
+import org.apache.pulsar.common.policies.data.ClusterOperation;
 import org.apache.pulsar.common.policies.data.NamespaceOperation;
 import org.apache.pulsar.common.policies.data.PolicyName;
 import org.apache.pulsar.common.policies.data.PolicyOperation;
@@ -324,7 +326,7 @@ public class PulsarAuthorizationProvider implements AuthorizationProvider {
     private CompletableFuture<Void> checkNamespace(Stream<String> namespaces) {
         boolean sameNamespace = namespaces.distinct().count() == 1;
         if (!sameNamespace) {
-            throw new IllegalArgumentException("The namespace should be the same");
+            return FutureUtil.failedFuture(new IllegalArgumentException("The namespace should be the same"));
         }
         return CompletableFuture.completedFuture(null);
     }
@@ -460,19 +462,7 @@ public class PulsarAuthorizationProvider implements AuthorizationProvider {
     }
 
     private CompletableFuture<Boolean> checkAuthorization(TopicName topicName, String role, AuthAction action) {
-        return checkPermission(topicName, role, action).thenCompose(permission ->
-                permission ? checkCluster(topicName) : CompletableFuture.completedFuture(false));
-    }
-
-    private CompletableFuture<Boolean> checkCluster(TopicName topicName) {
-        if (topicName.isGlobal() || conf.getClusterName().equals(topicName.getCluster())) {
-            return CompletableFuture.completedFuture(true);
-        }
-        if (log.isDebugEnabled()) {
-            log.debug("Topic [{}] does not belong to local cluster [{}]", topicName.toString(), conf.getClusterName());
-        }
-        return pulsarResources.getClusterResources().listAsync()
-                .thenApply(clusters -> clusters.contains(topicName.getCluster()));
+        return checkPermission(topicName, role, action);
     }
 
     public CompletableFuture<Boolean> checkPermission(TopicName topicName, String role, AuthAction action) {
@@ -616,6 +606,9 @@ public class PulsarAuthorizationProvider implements AuthorizationProvider {
                             case GRANT_PERMISSION:
                             case GET_PERMISSION:
                             case REVOKE_PERMISSION:
+                            case GET_PROPERTIES:
+                            case UPDATE_PROPERTIES:
+                            case DELETE_PROPERTIES:
                                 return CompletableFuture.completedFuture(false);
                             default:
                                 return FutureUtil.failedFuture(new IllegalStateException(
@@ -688,6 +681,13 @@ public class PulsarAuthorizationProvider implements AuthorizationProvider {
                         }
                     }
                 });
+    }
+
+    @Override
+    public CompletableFuture<Boolean> allowBrokerOperationAsync(String clusterName, String brokerId,
+                                                                BrokerOperation brokerOperation, String role,
+                                                                AuthenticationDataSource authData) {
+        return isSuperUser(role, authData, conf);
     }
 
     @Override
@@ -851,5 +851,19 @@ public class PulsarAuthorizationProvider implements AuthorizationProvider {
                         }
                     });
         });
+    }
+
+    @Override
+    public CompletableFuture<Boolean> allowClusterOperationAsync(String clusterName, ClusterOperation clusterOperation,
+                                                                 String role, AuthenticationDataSource authData) {
+        return isSuperUser(role, authData, conf);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> allowClusterPolicyOperationAsync(String clusterName, String role,
+                                                                       PolicyName policy,
+                                                                       PolicyOperation operation,
+                                                                       AuthenticationDataSource authData) {
+        return isSuperUser(role, authData, conf);
     }
 }

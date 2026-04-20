@@ -144,7 +144,7 @@ public class PulsarLedgerManager implements LedgerManager {
                         return;
                     }
 
-                    Versioned<LedgerMetadata> result = new Versioned(metadata, new LongVersion(stat.getVersion()));
+                    Versioned<LedgerMetadata> result = new Versioned<>(metadata, new LongVersion(stat.getVersion()));
                     promise.complete(result);
                 });
 
@@ -292,7 +292,7 @@ public class PulsarLedgerManager implements LedgerManager {
         }
     }
 
-    private static final Pattern ledgerPathRegex = Pattern.compile("/L[0-9]+$");
+    private static final Pattern ledgerPathRegex = Pattern.compile(".*/L[0-9]+$");
 
     private void handleDataNotification(Notification n) {
         if (!n.getPath().startsWith(ledgerRootPath)

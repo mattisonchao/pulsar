@@ -18,6 +18,8 @@
  */
 package org.apache.pulsar.common.policies.data;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.beans.Transient;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -36,6 +38,10 @@ public class Policies {
     public final AuthPolicies auth_policies = AuthPolicies.builder().build();
     @SuppressWarnings("checkstyle:MemberName")
     public Set<String> replication_clusters = new HashSet<>();
+    /**
+     * This field has a unique usage: defines whether a namespace is allowed to access by the current cluster.
+     * Instead of access this field directly, please call {@link BrokerService#isCurrentClusterAllowed}.
+     */
     @SuppressWarnings("checkstyle:MemberName")
     public Set<String> allowed_clusters = new HashSet<>();
     public BundlesData bundles;
@@ -123,6 +129,10 @@ public class Policies {
     @SuppressWarnings("checkstyle:MemberName")
     public Set<String> subscription_types_enabled = new HashSet<>();
 
+    @SuppressWarnings("checkstyle:MemberName")
+    // Default to null to fallback to broker level configuration
+    public Set<String> allowed_topic_property_keys_for_metrics = null;
+
     public Map<String, String> properties = new HashMap<>();
 
     @SuppressWarnings("checkstyle:MemberName")
@@ -161,6 +171,7 @@ public class Policies {
                 is_allow_auto_update_schema,
                 offload_policies,
                 subscription_types_enabled,
+                allowed_topic_property_keys_for_metrics,
                 properties,
                 resource_group_name, entryFilters, migrated,
                 dispatcherPauseOnAckStatePersistentEnabled);
@@ -209,6 +220,8 @@ public class Policies {
                     && is_allow_auto_update_schema == other.is_allow_auto_update_schema
                     && Objects.equals(offload_policies, other.offload_policies)
                     && Objects.equals(subscription_types_enabled, other.subscription_types_enabled)
+                    && Objects.equals(allowed_topic_property_keys_for_metrics,
+                            other.allowed_topic_property_keys_for_metrics)
                     && Objects.equals(properties, other.properties)
                     && Objects.equals(migrated, other.migrated)
                     && Objects.equals(resource_group_name, other.resource_group_name)
@@ -216,9 +229,66 @@ public class Policies {
                     && Objects.equals(dispatcherPauseOnAckStatePersistentEnabled,
                     other.dispatcherPauseOnAckStatePersistentEnabled);
         }
-
         return false;
     }
 
+    /**
+     * Get the cluster that can delete the namespace.
+     */
+    @JsonIgnore
+    @Transient
+    public String getClusterThatCanDeleteNamespace() {
+        if (this.replication_clusters.size() != 1 ||  this.allowed_clusters.size() > 1) {
+            return null;
+        }
+        String cluster = this.replication_clusters.iterator().next();
+        // The namespace can be deleted if the current cluster is the only one cluster who can access it.
+        if (!this.allowed_clusters.isEmpty() && this.allowed_clusters.contains(cluster)) {
+            return cluster;
+        } else {
+            return cluster;
+        }
+    }
 
+    /**
+     * Replication clusters should be included in allowed clusters.
+     */
+    public static boolean checkNewReplicationClusters(Policies oldNsPolicies, Set<String> newReplicationClusters) {
+        if (oldNsPolicies.allowed_clusters.isEmpty()) {
+            return true;
+        }
+        for (String newCluster : newReplicationClusters) {
+            if (!oldNsPolicies.allowed_clusters.contains(newCluster)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Allowed cluster should contain all clusters that are defined in replication clusters.
+     */
+    public static boolean checkNewAllowedClusters(Policies oldNsPolicies, Set<String> newAllowedClusters) {
+        for (String oldReplicationCluster : oldNsPolicies.replication_clusters) {
+            if (!newAllowedClusters.contains(oldReplicationCluster)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Replication clusters should be included in allowed clusters if allowed clusters are not empty.
+     */
+    public boolean checkAllowedAndReplicationClusters() {
+        if (this.allowed_clusters.isEmpty()) {
+            return true;
+        }
+        for (String replicationCluster : this.replication_clusters) {
+            if (!this.allowed_clusters.contains(replicationCluster)) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

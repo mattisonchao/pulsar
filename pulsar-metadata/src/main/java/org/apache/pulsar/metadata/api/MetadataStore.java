@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import org.apache.pulsar.metadata.api.MetadataStoreException.BadVersionException;
 import org.apache.pulsar.metadata.api.MetadataStoreException.NotFoundException;
 import org.slf4j.Logger;
@@ -77,6 +78,20 @@ public interface MetadataStore extends AutoCloseable {
      */
     CompletableFuture<List<String>> getChildren(String path);
 
+
+    /**
+     * Return all the nodes (lexicographically sorted) that are children to the specific path.
+     *
+     * If the path itself does not exist, it will return an empty list.
+     *
+     * This method is similar to {@link #getChildren(String)}, but it attempts to read directly from
+     *  the underlying store.
+     *
+     * @param path
+     *            the path of the key to get from the store
+     * @return a future to track the async request
+     */
+    CompletableFuture<List<String>> getChildrenFromStore(String path);
     /**
      * Read whether a specific path exists.
      *
@@ -173,7 +188,7 @@ public interface MetadataStore extends AutoCloseable {
      *          the cache configuration to be used
      * @return the metadata cache object
      */
-    <T> MetadataCache<T> getMetadataCache(Class<T> clazz, MetadataCacheConfig cacheConfig);
+    <T> MetadataCache<T> getMetadataCache(Class<T> clazz, MetadataCacheConfig<?> cacheConfig);
 
     /**
      * Create a metadata cache specialized for a specific class.
@@ -197,7 +212,7 @@ public interface MetadataStore extends AutoCloseable {
      *          the cache configuration to be used
      * @return the metadata cache object
      */
-    <T> MetadataCache<T> getMetadataCache(TypeReference<T> typeRef, MetadataCacheConfig cacheConfig);
+    <T> MetadataCache<T> getMetadataCache(TypeReference<T> typeRef, MetadataCacheConfig<?> cacheConfig);
 
     /**
      * Create a metadata cache specialized for a specific class.
@@ -219,9 +234,13 @@ public interface MetadataStore extends AutoCloseable {
      *            the custom serialization/deserialization object
      * @param cacheConfig
      *          the cache configuration to be used
+     * @deprecated use {@link #getMetadataCache(String, MetadataSerde, MetadataCacheConfig)}
      * @return the metadata cache object
      */
-    <T> MetadataCache<T> getMetadataCache(MetadataSerde<T> serde, MetadataCacheConfig cacheConfig);
+    @Deprecated
+    default <T> MetadataCache<T> getMetadataCache(MetadataSerde<T> serde, MetadataCacheConfig<?> cacheConfig) {
+        return getMetadataCache("serde", serde, cacheConfig);
+    }
 
     /**
      * Create a metadata cache that uses a particular serde object.
@@ -236,11 +255,44 @@ public interface MetadataStore extends AutoCloseable {
     }
 
     /**
+     * Create a metadata cache that uses a particular serde object.
+     *
+     * @param <T>
+     * @param serde
+     *            the custom serialization/deserialization object
+     * @return the metadata cache object
+     */
+    default <T> MetadataCache<T> getMetadataCache(String cacheName, MetadataSerde<T> serde,
+                                                  MetadataCacheConfig<?> cacheConfig) {
+        return getMetadataCache(serde, cacheConfig);
+    }
+
+    /**
+     * Find all records matching a secondary index.
+     *
+     * <p>On stores that support secondary indexes natively (e.g. Oxia), this uses the index
+     * efficiently. On stores that don't (e.g. ZooKeeper), it falls back to listing all children
+     * under {@code scanPathPrefix}, fetching each record, and applying {@code fallbackFilter}.
+     *
+     * @param scanPathPrefix path prefix for fallback scan (used by stores without native index support)
+     * @param indexName      the secondary index name
+     * @param secondaryKey   the secondary key to look up
+     * @param fallbackFilter predicate to filter results during fallback scan; ignored by native implementations
+     * @return list of matching {@link GetResult} entries
+     */
+    default CompletableFuture<List<GetResult>> findByIndex(
+            String scanPathPrefix, String indexName, String secondaryKey,
+            Predicate<GetResult> fallbackFilter) {
+        return CompletableFuture.failedFuture(
+                new MetadataStoreException("Secondary index queries not supported by this store"));
+    }
+
+    /**
      * Returns the default metadata cache config.
      *
      * @return default metadata cache config
      */
-    default MetadataCacheConfig getDefaultMetadataCacheConfig() {
+    default MetadataCacheConfig<?> getDefaultMetadataCacheConfig() {
         return MetadataCacheConfig.builder().build();
     }
 }

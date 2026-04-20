@@ -33,17 +33,17 @@ import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 public class SslContextTest {
-    final static String brokerKeyStorePath =
+    static final String BROKER_KEY_STORE_PATH =
             Resources.getResource("certificate-authority/jks/broker.keystore.jks").getPath();
-    final static String brokerTrustStorePath =
+    static final String BROKER_TRUST_STORE_PATH =
             Resources.getResource("certificate-authority/jks/broker.truststore.jks").getPath();
-    final static String keyStoreType = "JKS";
-    final static String keyStorePassword = "111111";
+    static final String KEY_STORE_TYPE = "JKS";
+    static final String KEY_STORE_PASSWORD = "111111";
 
-    final static String caCertPath = Resources.getResource("certificate-authority/certs/ca.cert.pem").getPath();
-    final static String brokerCertPath =
+    static final String CA_CERT_PATH = Resources.getResource("certificate-authority/certs/ca.cert.pem").getPath();
+    static final String BROKER_CERT_PATH =
             Resources.getResource("certificate-authority/server-keys/broker.cert.pem").getPath();
-    final static String brokerKeyPath =
+    static final String BROKER_KEY_PATH =
             Resources.getResource("certificate-authority/server-keys/broker.key-pk8.pem").getPath();
 
     @DataProvider(name = "caCertSslContextDataProvider")
@@ -81,16 +81,17 @@ public class SslContextTest {
     }
 
     @Test(dataProvider = "cipherDataProvider")
+    @SuppressWarnings("try")
     public void testServerKeyStoreSSLContext(Set<String> cipher) throws Exception {
         PulsarSslConfiguration pulsarSslConfiguration = PulsarSslConfiguration.builder()
                 .tlsEnabledWithKeystore(true)
-                .tlsKeyStoreType(keyStoreType)
-                .tlsKeyStorePath(brokerKeyStorePath)
-                .tlsKeyStorePassword(keyStorePassword)
+                .tlsKeyStoreType(KEY_STORE_TYPE)
+                .tlsKeyStorePath(BROKER_KEY_STORE_PATH)
+                .tlsKeyStorePassword(KEY_STORE_PASSWORD)
                 .allowInsecureConnection(false)
-                .tlsTrustStoreType(keyStoreType)
-                .tlsTrustStorePath(brokerTrustStorePath)
-                .tlsTrustStorePassword(keyStorePassword)
+                .tlsTrustStoreType(KEY_STORE_TYPE)
+                .tlsTrustStorePath(BROKER_TRUST_STORE_PATH)
+                .tlsTrustStorePassword(KEY_STORE_PASSWORD)
                 .requireTrustedClientCertOnConnect(true)
                 .tlsCiphers(cipher)
                 .build();
@@ -108,13 +109,14 @@ public class SslContextTest {
     }
 
     @Test(dataProvider = "cipherDataProvider")
+    @SuppressWarnings("try")
     public void testClientKeyStoreSSLContext(Set<String> cipher) throws Exception {
         PulsarSslConfiguration pulsarSslConfiguration = PulsarSslConfiguration.builder()
                 .allowInsecureConnection(false)
                 .tlsEnabledWithKeystore(true)
-                .tlsTrustStoreType(keyStoreType)
-                .tlsTrustStorePath(brokerTrustStorePath)
-                .tlsTrustStorePassword(keyStorePassword)
+                .tlsTrustStoreType(KEY_STORE_TYPE)
+                .tlsTrustStorePath(BROKER_TRUST_STORE_PATH)
+                .tlsTrustStorePassword(KEY_STORE_PASSWORD)
                 .tlsCiphers(cipher)
                 .authData(new ClientAuthenticationData())
                 .build();
@@ -125,13 +127,14 @@ public class SslContextTest {
     }
 
     @Test(dataProvider = "caCertSslContextDataProvider")
+    @SuppressWarnings("try")
     public void testServerCaCertSslContextWithSslProvider(SslProvider sslProvider, Set<String> ciphers)
             throws Exception {
         try (PulsarSslFactory pulsarSslFactory = new DefaultPulsarSslFactory()) {
             PulsarSslConfiguration.PulsarSslConfigurationBuilder builder = PulsarSslConfiguration.builder()
-                    .tlsTrustCertsFilePath(caCertPath)
-                    .tlsCertificateFilePath(brokerCertPath)
-                    .tlsKeyFilePath(brokerKeyPath)
+                    .tlsTrustCertsFilePath(CA_CERT_PATH)
+                    .tlsCertificateFilePath(BROKER_CERT_PATH)
+                    .tlsKeyFilePath(BROKER_KEY_PATH)
                     .tlsCiphers(ciphers)
                     .requireTrustedClientCertOnConnect(true);
             if (sslProvider != null) {
@@ -151,12 +154,13 @@ public class SslContextTest {
     }
 
     @Test(dataProvider = "caCertSslContextDataProvider")
+    @SuppressWarnings("try")
     public void testClientCaCertSslContextWithSslProvider(SslProvider sslProvider, Set<String> ciphers)
             throws Exception {
         try (PulsarSslFactory pulsarSslFactory = new DefaultPulsarSslFactory()) {
             PulsarSslConfiguration.PulsarSslConfigurationBuilder builder = PulsarSslConfiguration.builder()
                     .allowInsecureConnection(true)
-                    .tlsTrustCertsFilePath(caCertPath)
+                    .tlsTrustCertsFilePath(CA_CERT_PATH)
                     .tlsCiphers(ciphers);
             if (sslProvider != null) {
                 builder.tlsProvider(sslProvider.name());

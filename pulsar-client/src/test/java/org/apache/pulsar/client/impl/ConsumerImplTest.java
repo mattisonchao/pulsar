@@ -37,7 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-
+import java.util.regex.Pattern;
 import lombok.Cleanup;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
@@ -70,6 +70,7 @@ public class ConsumerImplTest {
         createConsumer(consumerConf);
     }
 
+    @SuppressWarnings({"rawtypes", "unchecked"})
     private void createConsumer(ConsumerConfigurationData consumerConf) {
         executorProvider = new ExecutorProvider(1, "ConsumerImplTest");
         internalExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -108,8 +109,10 @@ public class ConsumerImplTest {
     public void testCorrectBackoffConfiguration() {
         final Backoff backoff = consumer.getConnectionHandler().backoff;
         ClientConfigurationData clientConfigurationData = new ClientConfigurationData();
-        Assert.assertEquals(backoff.getMax(), TimeUnit.NANOSECONDS.toMillis(clientConfigurationData.getMaxBackoffIntervalNanos()));
-        Assert.assertEquals(backoff.next(), TimeUnit.NANOSECONDS.toMillis(clientConfigurationData.getInitialBackoffIntervalNanos()));
+        Assert.assertEquals(backoff.getMax().toMillis(),
+                TimeUnit.NANOSECONDS.toMillis(clientConfigurationData.getMaxBackoffIntervalNanos()));
+        Assert.assertEquals(backoff.next().toMillis(),
+                TimeUnit.NANOSECONDS.toMillis(clientConfigurationData.getInitialBackoffIntervalNanos()));
     }
 
     @Test(invocationTimeOut = 1000)
@@ -145,8 +148,10 @@ public class ConsumerImplTest {
     }
 
     @Test(invocationTimeOut = 1000)
+    @SuppressWarnings("unchecked")
     public void testNotifyPendingReceivedCallback_InterceptorsWorksWithPrefetchDisabled() {
         CompletableFuture<Message<byte[]>> receiveFuture = new CompletableFuture<>();
+        @SuppressWarnings("rawtypes")
         MessageImpl message = mock(MessageImpl.class);
         ConsumerImpl<byte[]> spy = spy(consumer);
 
@@ -163,8 +168,10 @@ public class ConsumerImplTest {
     }
 
     @Test(invocationTimeOut = 1000)
+    @SuppressWarnings("unchecked")
     public void testNotifyPendingReceivedCallback_WorkNormally() {
         CompletableFuture<Message<byte[]>> receiveFuture = new CompletableFuture<>();
+        @SuppressWarnings("rawtypes")
         MessageImpl message = mock(MessageImpl.class);
         ConsumerImpl<byte[]> spy = spy(consumer);
 
@@ -258,11 +265,11 @@ public class ConsumerImplTest {
 
     @Test
     public void testTopicPriorityLevel() {
-        ConsumerConfigurationData<Object> consumerConf = new ConsumerConfigurationData<>();
-        consumerConf.getTopicConfigurations().add(
+        ConsumerConfigurationData<byte[]> consumerConf2 = new ConsumerConfigurationData<>();
+        consumerConf2.getTopicConfigurations().add(
                 TopicConsumerConfigurationData.ofTopicName(topic, 1));
 
-        createConsumer(consumerConf);
+        createConsumer(consumerConf2);
 
         assertThat(consumer.getPriorityLevel()).isEqualTo(1);
     }
@@ -295,5 +302,11 @@ public class ConsumerImplTest {
         assertTrue(firstResult.isDone());
         assertTrue(secondResult.isCompletedExceptionally());
         verify(cnx, times(1)).sendRequestWithId(any(ByteBuf.class), anyLong());
+    }
+
+    @Test(invocationTimeOut = 1000)
+    public void testAutoGenerateConsumerName() {
+        Pattern consumerNamePattern = Pattern.compile("[a-zA-Z0-9]{5}");
+        assertTrue(consumerNamePattern.matcher(consumer.getConsumerName()).matches());
     }
 }

@@ -51,13 +51,13 @@ import org.apache.pulsar.metadata.api.CacheGetResult;
 import org.apache.pulsar.metadata.api.MetadataCache;
 import org.apache.pulsar.metadata.api.MetadataStore;
 import org.apache.pulsar.metadata.api.Notification;
+import org.apache.pulsar.metadata.api.extended.MetadataStoreExtended;
 import org.apache.pulsar.metadata.api.extended.SessionEvent;
-import org.apache.pulsar.metadata.impl.AbstractMetadataStore;
 
 @Slf4j
 public class PulsarRegistrationClient implements RegistrationClient {
 
-    private final AbstractMetadataStore store;
+    private final MetadataStoreExtended store;
     private final String ledgersRootPath;
     // registration paths
     private final String bookieRegistrationPath;
@@ -74,7 +74,7 @@ public class PulsarRegistrationClient implements RegistrationClient {
 
     public PulsarRegistrationClient(MetadataStore store,
                                     String ledgersRootPath) {
-        this.store = (AbstractMetadataStore) store;
+        this.store = (MetadataStoreExtended) store;
         this.ledgersRootPath = ledgersRootPath;
         this.bookieServiceInfoMetadataCache = store.getMetadataCache(BookieServiceInfoSerde.INSTANCE);
         this.sequencer = Sequencer.create();
@@ -181,8 +181,13 @@ public class PulsarRegistrationClient implements RegistrationClient {
     @Override
     public CompletableFuture<Void> watchWritableBookies(RegistrationListener registrationListener) {
         writableBookiesWatchers.add(registrationListener);
+        // trigger all listeners in writableBookiesWatchers one by one. It aims to keep a sync way
+        // to make sure the previous listener has finished when a new listener is register.
+        // Though it would bring duplicate trigger listener problem, but since watchWritableBookies
+        // is only executed when bookieClient construct, the duplicate problem is acceptable.
         return getWritableBookies()
-                .thenAcceptAsync(registrationListener::onBookiesChanged, executor);
+                .thenAcceptAsync(bookies ->
+                        writableBookiesWatchers.forEach(w -> w.onBookiesChanged(bookies)), executor);
     }
 
     @Override
@@ -193,8 +198,13 @@ public class PulsarRegistrationClient implements RegistrationClient {
     @Override
     public CompletableFuture<Void> watchReadOnlyBookies(RegistrationListener registrationListener) {
         readOnlyBookiesWatchers.add(registrationListener);
+        // trigger all listeners in readOnlyBookiesWatchers one by one. It aims to keep a sync way
+        // to make sure the previous listener has finished when a new listener is register.
+        // Though it would bring duplicate trigger listener problem, but since watchReadOnlyBookies
+        // is only executed when bookieClient construct, the duplicate problem is acceptable.
         return getReadOnlyBookies()
-                .thenAcceptAsync(registrationListener::onBookiesChanged, executor);
+                .thenAcceptAsync(bookies ->
+                        readOnlyBookiesWatchers.forEach(w -> w.onBookiesChanged(bookies)), executor);
     }
 
     @Override

@@ -85,7 +85,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
 
     @Test
     public void testSimpleConsumerEvents() throws Exception {
-        final String topicName = "persistent://prop/use/ns-abc/shared-topic1";
+        final String topicName = "persistent://prop/ns-abc/shared-topic1";
         final String subName = "sub1";
         final int numMsgs = 100;
 
@@ -93,7 +93,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
         Consumer<byte[]> consumer1 = pulsarClient.newConsumer().topic(topicName).subscriptionName(subName)
                 .subscriptionType(SubscriptionType.Shared).subscribe();
 
-        PulsarClient newPulsarClient = newPulsarClient(lookupUrl.toString(), 0);// Creates new client connection
+        PulsarClient newPulsarClient = newPulsarClient(lookupUrl.toString(), 0); // Creates new client connection
         Consumer<byte[]> consumer2 = newPulsarClient.newConsumer().topic(topicName).subscriptionName(subName)
                 .subscriptionType(SubscriptionType.Shared).subscribe();
 
@@ -186,7 +186,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
 
     @Test
     public void testReplayOnConsumerDisconnect() throws Exception {
-        final String topicName = "persistent://prop/use/ns-abc/shared-topic3";
+        final String topicName = "persistent://prop/ns-abc/shared-topic3";
         final String subName = "sub3";
         final int numMsgs = 100;
 
@@ -204,7 +204,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
                 }).subscribe();
 
         // consumer2 does not ack messages
-        PulsarClient newPulsarClient = newPulsarClient(lookupUrl.toString(), 0);// Creates new client connection
+        PulsarClient newPulsarClient = newPulsarClient(lookupUrl.toString(), 0); // Creates new client connection
         Consumer<byte[]> consumer2 = newPulsarClient.newConsumer().topic(topicName).subscriptionName(subName)
                 .subscriptionType(SubscriptionType.Shared).messageListener((consumer, msg) -> {
                     // do nothing
@@ -240,7 +240,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
     // how the round robin distribution algorithm is behaving
     @Test(enabled = false)
     public void testRoundRobinBatchDistribution() throws Exception {
-        final String topicName = "persistent://prop/use/ns-abc/shared-topic5";
+        final String topicName = "persistent://prop/ns-abc/shared-topic5";
         final String subName = "sub5";
         final int numMsgs = 137; /* some random number different than default batch size of 100 */
 
@@ -312,7 +312,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
     @Test(timeOut = 300000)
     public void testSharedSingleAckedNormalTopic() throws Exception {
         String key = "test1";
-        final String topicName = "persistent://prop/use/ns-abc/topic-" + key;
+        final String topicName = "persistent://prop/ns-abc/topic-" + key;
         final String subscriptionName = "my-shared-subscription-" + key;
         final String messagePredicate = "my-message-" + key + "-";
         final int totalMessages = 50;
@@ -328,7 +328,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
                 .subscriptionName(subscriptionName).receiverQueueSize(10).subscriptionType(SubscriptionType.Shared);
         Consumer<byte[]> consumer1 = consumerBuilder1.subscribe();
 
-        PulsarClient newPulsarClient = newPulsarClient(lookupUrl.toString(), 0);// Creates new client connection
+        PulsarClient newPulsarClient = newPulsarClient(lookupUrl.toString(), 0); // Creates new client connection
         ConsumerBuilder<byte[]> consumerBuilder2 = newPulsarClient.newConsumer().topic(topicName)
                 .subscriptionName(subscriptionName).receiverQueueSize(10).subscriptionType(SubscriptionType.Shared);
         Consumer<byte[]> consumer2 = consumerBuilder2.subscribe();
@@ -383,7 +383,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
     @Test(timeOut = 60000)
     public void testCancelReadRequestOnLastDisconnect() throws Exception {
         String key = "testCancelReadRequestOnLastDisconnect";
-        final String topicName = "persistent://prop/use/ns-abc/topic-" + key;
+        final String topicName = "persistent://prop/ns-abc/topic-" + key;
         final String subscriptionName = "my-shared-subscription-" + key;
         final String messagePredicate = "my-message-" + key + "-";
         final int totalMessages = 10;
@@ -459,7 +459,7 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
 
     @Test
     public void testUnackedCountWithRedeliveries() throws Exception {
-        final String topicName = "persistent://prop/use/ns-abc/testUnackedCountWithRedeliveries";
+        final String topicName = "persistent://prop/ns-abc/testUnackedCountWithRedeliveries";
         final String subName = "sub3";
         final int numMsgs = 10;
 
@@ -474,25 +474,25 @@ public class PersistentQueueE2ETest extends BrokerTestBase {
             producer.send(("hello-" + i).getBytes());
         }
 
-        Set<MessageId> c1_receivedMessages = new HashSet<>();
+        Set<MessageId> c1ReceivedMessages = new HashSet<>();
 
         // C-1 gets all messages but doesn't ack
         for (int i = 0; i < numMsgs; i++) {
-            c1_receivedMessages.add(consumer1.receive().getMessageId());
+            c1ReceivedMessages.add(consumer1.receive().getMessageId());
         }
 
         // C-2 will not get any message initially, since everything went to C-1 already
         Consumer<byte[]> consumer2 = consumerBuilder.subscribe();
 
         // Trigger C-1 to redeliver everything, half will go C-1 again and the other half to C-2
-        consumer1.redeliverUnacknowledgedMessages(c1_receivedMessages);
+        consumer1.redeliverUnacknowledgedMessages(c1ReceivedMessages);
 
         // Consumer 2 will also receive all message but not ack
         for (int i = 0; i < numMsgs; i++) {
             consumer2.receive();
         }
 
-        for (MessageId msgId : c1_receivedMessages) {
+        for (MessageId msgId : c1ReceivedMessages) {
             consumer1.acknowledge(msgId);
         }
 

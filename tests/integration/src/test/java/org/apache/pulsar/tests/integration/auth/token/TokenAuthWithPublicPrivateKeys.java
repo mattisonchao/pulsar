@@ -19,12 +19,9 @@
 package org.apache.pulsar.tests.integration.auth.token;
 
 import com.google.common.io.Files;
-
 import java.io.File;
 import java.util.concurrent.TimeUnit;
-
 import lombok.extern.slf4j.Slf4j;
-
 import org.apache.pulsar.tests.integration.containers.BrokerContainer;
 import org.apache.pulsar.tests.integration.containers.ProxyContainer;
 import org.apache.pulsar.tests.integration.containers.PulsarContainer;
@@ -77,12 +74,14 @@ public class TokenAuthWithPublicPrivateKeys extends PulsarTokenAuthenticationBas
         log.info("Created proxy token: {}", proxyAuthToken);
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     protected void configureBroker(BrokerContainer brokerContainer) throws Exception {
         brokerContainer.withFileSystemBind(publicKeyFile.toString(), PUBLIC_KEY_PATH_INSIDE_CONTAINER);
         brokerContainer.withEnv("tokenPublicKey", "file://" + PUBLIC_KEY_PATH_INSIDE_CONTAINER);
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     protected void configureProxy(ProxyContainer proxyContainer) throws Exception {
         proxyContainer.withFileSystemBind(publicKeyFile.toString(), PUBLIC_KEY_PATH_INSIDE_CONTAINER);

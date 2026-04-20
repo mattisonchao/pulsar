@@ -151,6 +151,10 @@ public class BucketDelayedDeliveryTrackerTest extends AbstractDeliveryTrackerTes
                     new BucketDelayedDeliveryTracker(dispatcher, timer, 100000, clock,
                             true, bucketSnapshotStorage, 20, TimeUnit.HOURS.toMillis(1), 5, 100)
             }};
+            case "testClear" -> new Object[][]{{
+                    new BucketDelayedDeliveryTracker(dispatcher, timer, 100000, clock,
+                            true, bucketSnapshotStorage, 1000, TimeUnit.MILLISECONDS.toMillis(100), -1, 50)
+            }};
             default -> new Object[][]{{
                     new BucketDelayedDeliveryTracker(dispatcher, timer, 1, clock,
                             true, bucketSnapshotStorage, 1000, TimeUnit.MILLISECONDS.toMillis(100), -1, 50)
@@ -194,8 +198,8 @@ public class BucketDelayedDeliveryTrackerTest extends AbstractDeliveryTrackerTes
 
         Awaitility.await().untilAsserted(() -> {
             Assert.assertTrue(
-                    tracker.getImmutableBuckets().asMapOfRanges().values().stream().noneMatch(x -> x.merging ||
-                            !x.getSnapshotCreateFuture().get().isDone()));
+                    tracker.getImmutableBuckets().asMapOfRanges().values().stream().noneMatch(x -> x.merging
+                            || !x.getSnapshotCreateFuture().get().isDone()));
         });
 
         assertTrue(tracker.hasMessageAvailable());
@@ -265,6 +269,7 @@ public class BucketDelayedDeliveryTrackerTest extends AbstractDeliveryTrackerTes
         assertNotSame(array, array2);
     }
 
+    @SuppressWarnings("deprecation")
     @Test(dataProvider = "delayedTracker")
     public void testMergeSnapshot(final BucketDelayedDeliveryTracker tracker) throws Exception {
         for (int i = 1; i <= 110; i++) {
@@ -318,6 +323,7 @@ public class BucketDelayedDeliveryTrackerTest extends AbstractDeliveryTrackerTes
         tracker2.close();
     }
 
+    @SuppressWarnings("deprecation")
     @Test(dataProvider = "delayedTracker")
     public void testWithBkException(final BucketDelayedDeliveryTracker tracker) throws Exception {
         MockBucketSnapshotStorage mockBucketSnapshotStorage = (MockBucketSnapshotStorage) bucketSnapshotStorage;
@@ -363,7 +369,7 @@ public class BucketDelayedDeliveryTrackerTest extends AbstractDeliveryTrackerTes
         tracker.close();
 
         BucketDelayedDeliveryTracker tracker2 = new BucketDelayedDeliveryTracker(dispatcher, timer, 1000, clock,
-                true, bucketSnapshotStorage, 5, TimeUnit.MILLISECONDS.toMillis(10), -1,10);
+                true, bucketSnapshotStorage, 5, TimeUnit.MILLISECONDS.toMillis(10), -1, 10);
 
         Long delayedMessagesInSnapshotValue = delayedMessagesInSnapshot.getValue();
         assertEquals(tracker2.getNumberOfDelayedMessages(), delayedMessagesInSnapshotValue);
@@ -424,6 +430,8 @@ public class BucketDelayedDeliveryTrackerTest extends AbstractDeliveryTrackerTes
             Position position = scheduledMessages.pollFirst();
             assertEquals(position, PositionFactory.create(i, i));
         }
+
+        tracker.close();
     }
 
     @Test(dataProvider = "delayedTracker")

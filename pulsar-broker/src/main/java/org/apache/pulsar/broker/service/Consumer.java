@@ -27,8 +27,6 @@ import com.google.common.util.concurrent.AtomicDouble;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import io.opentelemetry.api.common.Attributes;
-import it.unimi.dsi.fastutil.ints.IntIntPair;
-import it.unimi.dsi.fastutil.objects.ObjectIntPair;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -73,6 +71,8 @@ import org.apache.pulsar.common.stats.Rate;
 import org.apache.pulsar.common.util.DateFormatter;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.common.util.collections.BitSetRecyclable;
+import org.apache.pulsar.common.util.collections.IntIntPair;
+import org.apache.pulsar.common.util.collections.ObjectIntPair;
 import org.apache.pulsar.opentelemetry.OpenTelemetryAttributes;
 import org.apache.pulsar.transaction.common.exception.TransactionConflictException;
 import org.slf4j.Logger;
@@ -101,8 +101,10 @@ public class Consumer {
     private final LongAdder messageAckCounter;
     private final Rate messageAckRate;
 
+    private volatile long firstMessagesSentTimestamp;
     private volatile long lastConsumedTimestamp;
     private volatile long lastAckedTimestamp;
+    private volatile long firstConsumedFlowTimestamp;
     private volatile long lastConsumedFlowTimestamp;
     private Rate chunkedMessageRate;
 
@@ -432,6 +434,9 @@ public class Consumer {
         writeAndFlushPromise.addListener(status -> {
             // only increment counters after the messages have been successfully written to the TCP/IP connection
             if (status.isSuccess()) {
+                if (firstMessagesSentTimestamp == 0) {
+                    firstMessagesSentTimestamp =  System.currentTimeMillis();
+                }
                 msgOut.recordMultipleEvents(totalMessages, totalBytes);
                 msgOutCounter.add(totalMessages);
                 bytesOutCounter.add(totalBytes);
@@ -595,6 +600,7 @@ public class Consumer {
                 ackedCount = getAckedCountForMsgIdNoAckSets(batchSize, position, ackOwnerConsumer);
                 if (checkCanRemovePendingAcksAndHandle(ackOwnerConsumer, position, msgId)) {
                     addAndGetUnAckedMsgs(ackOwnerConsumer, -(int) ackedCount);
+                    updateBlockedConsumerOnUnackedMsgs(ackOwnerConsumer);
                 }
             }
 
@@ -753,7 +759,7 @@ public class Consumer {
 
     private void checkAckValidationError(CommandAck ack, Position position) {
         if (ack.hasValidationError()) {
-            log.error("[{}] [{}] Received ack for corrupted message at {} - Reason: {}", subscription,
+            log.warn("[{}] [{}] Received ack for corrupted message at {} - Reason: {}", subscription,
                     consumerId, position, ack.getValidationError());
         }
     }
@@ -838,7 +844,11 @@ public class Consumer {
 
     public void flowPermits(int additionalNumberOfMessages) {
         checkArgument(additionalNumberOfMessages > 0);
-        this.lastConsumedFlowTimestamp = System.currentTimeMillis();
+        final long currentTs = System.currentTimeMillis();
+        if (firstConsumedFlowTimestamp == 0) {
+            firstConsumedFlowTimestamp  = currentTs;
+        }
+        this.lastConsumedFlowTimestamp = currentTs;
 
         // block shared consumer when unacked-messages reaches limit
         if (shouldBlockConsumerOnUnackMsgs() && unackedMessages >= getMaxUnackedMessages()) {
@@ -950,6 +960,7 @@ public class Consumer {
         stats.chunkedMessageRate = chunkedMessageRate.getRate();
     }
 
+    @SuppressWarnings("deprecation")
     public void updateStats(ConsumerStatsImpl consumerStats) {
         msgOutCounter.add(consumerStats.msgOutCounter);
         bytesOutCounter.add(consumerStats.bytesOutCounter);
@@ -967,16 +978,20 @@ public class Consumer {
         avgMessagesPerEntry.set(consumerStats.avgMessagesPerEntry);
     }
 
+    @SuppressWarnings("deprecation")
     public ConsumerStatsImpl getStats() {
         stats.msgOutCounter = msgOutCounter.longValue();
         stats.bytesOutCounter = bytesOutCounter.longValue();
         stats.lastAckedTimestamp = lastAckedTimestamp;
         stats.lastConsumedTimestamp = lastConsumedTimestamp;
         stats.lastConsumedFlowTimestamp = lastConsumedFlowTimestamp;
+        stats.firstMessagesSentTimestamp = firstMessagesSentTimestamp;
+        stats.firstConsumedFlowTimestamp = firstConsumedFlowTimestamp;
         stats.availablePermits = getAvailablePermits();
         stats.unackedMessages = unackedMessages;
         stats.blockedConsumerOnUnackedMsgs = blockedConsumerOnUnackedMsgs;
         stats.avgMessagesPerEntry = getAvgMessagesPerEntry();
+        stats.consumerName = consumerName;
         if (readPositionWhenJoining != null) {
             stats.readPositionWhenJoining = readPositionWhenJoining.toString();
         }
@@ -1047,6 +1062,9 @@ public class Consumer {
 
     @Override
     public boolean equals(Object obj) {
+        if (this == obj)  {
+            return true;
+        }
         if (obj instanceof Consumer) {
             Consumer other = (Consumer) obj;
             return consumerId == other.consumerId && Objects.equals(cnx.clientAddress(), other.cnx.clientAddress());
@@ -1077,6 +1095,11 @@ public class Consumer {
         if (log.isDebugEnabled()) {
             log.debug("[{}-{}] consumer {} received ack {}", topicName, subscription, consumerId, position);
         }
+        updateBlockedConsumerOnUnackedMsgs(ackOwnedConsumer);
+        return true;
+    }
+
+    public void updateBlockedConsumerOnUnackedMsgs(Consumer ackOwnedConsumer) {
         // unblock consumer-throttling when limit check is disabled or receives half of maxUnackedMessages =>
         // consumer can start again consuming messages
         int unAckedMsgs = UNACKED_MESSAGES_UPDATER.get(ackOwnedConsumer);
@@ -1086,7 +1109,6 @@ public class Consumer {
             ackOwnedConsumer.blockedConsumerOnUnackedMsgs = false;
             flowConsumerBlockedPermits(ackOwnedConsumer);
         }
-        return true;
     }
 
     public PendingAcksMap getPendingAcks() {

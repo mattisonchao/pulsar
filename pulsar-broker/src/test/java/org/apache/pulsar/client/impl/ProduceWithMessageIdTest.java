@@ -27,9 +27,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pulsar.broker.service.SharedPulsarBaseTest;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.MockBrokerService;
-import org.apache.pulsar.client.api.ProducerConsumerBase;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
@@ -42,24 +42,17 @@ import org.testng.annotations.Test;
 
 @Test(groups = "broker-impl")
 @Slf4j
-public class ProduceWithMessageIdTest extends ProducerConsumerBase {
+public class ProduceWithMessageIdTest extends SharedPulsarBaseTest {
     MockBrokerService mockBrokerService;
 
     @BeforeClass(alwaysRun = true)
-    public void setup() throws Exception {
+    public void setupMockBroker() throws Exception {
         mockBrokerService = new MockBrokerService();
         mockBrokerService.start();
-        super.internalSetup();
-        super.producerBaseSetup();
-    }
-
-    @Override
-    protected void cleanup() throws Exception {
-        super.internalCleanup();
     }
 
     @AfterClass(alwaysRun = true)
-    public void teardown() {
+    public void cleanupMockBroker() throws Exception {
         if (mockBrokerService != null) {
             mockBrokerService.stop();
             mockBrokerService = null;
@@ -84,7 +77,7 @@ public class ProduceWithMessageIdTest extends ProducerConsumerBase {
                 .serviceUrl(mockBrokerService.getBrokerAddress())
                 .build();
 
-        String topic = "persistent://public/default/t1";
+        String topic = newTopicName();
         ProducerImpl<byte[]> producer =
                 (ProducerImpl<byte[]>) client.newProducer().topic(topic).enableBatching(false).create();
 
@@ -132,7 +125,7 @@ public class ProduceWithMessageIdTest extends ProducerConsumerBase {
 
         int batchSize = 10;
 
-        String topic = "persistent://public/default/testSendWithCallBack";
+        String topic = newTopicName();
         ProducerImpl<byte[]> producer =
                 (ProducerImpl<byte[]>) pulsarClient.newProducer().topic(topic)
                         .enableBatching(true)
@@ -146,8 +139,8 @@ public class ProduceWithMessageIdTest extends ProducerConsumerBase {
             public void sendComplete(Throwable e, OpSendMsgStats opSendMsgStats) {
                 log.info("sendComplete", e);
                 if (e == null){
-                    cdl.countDown();
                     sendMsgStats.set(opSendMsgStats);
+                    cdl.countDown();
                 }
             }
 
@@ -190,7 +183,7 @@ public class ProduceWithMessageIdTest extends ProducerConsumerBase {
         Assert.assertEquals(opSendMsgStats.getRetryCount(), 1);
         Assert.assertEquals(opSendMsgStats.getBatchSizeByte(), totalReadabled);
         Assert.assertEquals(opSendMsgStats.getNumMessagesInBatch(), batchSize);
-        Assert.assertEquals(opSendMsgStats.getHighestSequenceId(), batchSize-1);
+        Assert.assertEquals(opSendMsgStats.getHighestSequenceId(), batchSize - 1);
         Assert.assertEquals(opSendMsgStats.getTotalChunks(), 0);
         Assert.assertEquals(opSendMsgStats.getChunkId(), -1);
     }

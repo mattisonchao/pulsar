@@ -19,14 +19,12 @@
 package org.apache.pulsar.common.util;
 
 import static org.testng.Assert.assertTrue;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.pulsar.client.api.AuthenticationDataProvider;
 import org.awaitility.Awaitility;
 import org.testng.Assert;
@@ -106,6 +104,7 @@ public class FileModifiedTimeUpdaterTest {
     }
 
     @Test
+    @SuppressWarnings("try")
     public void testNettyClientSslContextRefresher() throws Exception {
         BasicAuthenticationData provider = new BasicAuthenticationData(null);
         String certFile = "/tmp/cert.txt";

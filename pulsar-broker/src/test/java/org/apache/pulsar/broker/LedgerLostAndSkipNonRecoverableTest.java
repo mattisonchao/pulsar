@@ -33,12 +33,13 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
+import org.apache.pulsar.broker.service.SharedPulsarBaseTest;
+import org.apache.pulsar.broker.service.SharedPulsarCluster;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
-import org.apache.pulsar.client.api.ProducerConsumerBase;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
@@ -46,32 +47,17 @@ import org.apache.pulsar.client.impl.MessageIdImpl;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.awaitility.Awaitility;
 import org.testng.Assert;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 @Slf4j
 @Test(groups = "broker")
-public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
+public class LedgerLostAndSkipNonRecoverableTest extends SharedPulsarBaseTest {
 
-    private static final String DEFAULT_NAMESPACE = "my-property/my-ns";
-
-    @BeforeClass
-    @Override
-    protected void setup() throws Exception {
-        super.internalSetup();
-        super.producerBaseSetup();
-    }
-
-    @AfterClass
-    @Override
-    protected void cleanup() throws Exception {
-        super.internalCleanup();
-    }
-
-    protected void doInitConf() throws Exception {
-        conf.setAutoSkipNonRecoverableData(true);
+    @BeforeMethod(alwaysRun = true)
+    public void enableAutoSkipNonRecoverable() throws Exception {
+        SharedPulsarCluster.get().getPulsarService().getConfiguration().setAutoSkipNonRecoverableData(true);
     }
 
     @DataProvider(name = "batchEnabled")
@@ -84,9 +70,8 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
 
     @Test(timeOut = 30000, dataProvider = "batchEnabled")
     public void testMarkDeletedPositionCanForwardAfterTopicLedgerLost(boolean enabledBatch) throws Exception {
-        String topicSimpleName = UUID.randomUUID().toString().replaceAll("-", "");
+        String topicName = newTopicName();
         String subName = UUID.randomUUID().toString().replaceAll("-", "");
-        String topicName = String.format("persistent://%s/%s", DEFAULT_NAMESPACE, topicSimpleName);
 
         log.info("create topic and subscription.");
         Consumer sub = createConsumer(topicName, subName, enabledBatch);
@@ -105,9 +90,9 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
 
         log.info("make individual ack.");
         ConsumerAndReceivedMessages consumerAndReceivedMessages1 =
-                waitConsumeAndAllMessages(topicName, subName, enabledBatch,false);
+                waitConsumeAndAllMessages(topicName, subName, enabledBatch, false);
         List<MessageIdImpl>[] messageIds = consumerAndReceivedMessages1.messageIds;
-        Consumer consumer = consumerAndReceivedMessages1.consumer;
+        Consumer<?> consumer = consumerAndReceivedMessages1.consumer;
         MessageIdImpl individualPosition = messageIds[1].get(messageCountPerEntry - 1);
         MessageIdImpl expectedMarkDeletedPosition =
                 new MessageIdImpl(messageIds[0].get(0).getLedgerId(), messageIds[0].get(0).getEntryId(), -1);
@@ -120,8 +105,9 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
         consumer.close();
 
         log.info("Make lost ledger [{}].", individualPosition.getLedgerId());
-        pulsar.getBrokerService().getTopic(topicName, false).get().get().close(false);
-        pulsarTestContext.getMockBookKeeper().deleteLedger(individualPosition.getLedgerId());
+        getTopic(topicName, false).get().get().close(false);
+        PulsarService pulsar = SharedPulsarCluster.get().getPulsarService();
+        pulsar.getBookKeeperClient().deleteLedger(individualPosition.getLedgerId());
 
         log.info("send some messages.");
         sendManyMessages(topicName, 3, messageCountPerEntry);
@@ -133,14 +119,13 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
 
         // cleanup
         consumerAndReceivedMessages2.consumer.close();
-        admin.topics().delete(topicName);
     }
 
     private ManagedCursorImpl getCursor(String topicName, String subName) throws Exception {
-        PersistentSubscription subscription_ =
-                (PersistentSubscription) pulsar.getBrokerService().getTopic(topicName, false)
+        PersistentSubscription subscription =
+                (PersistentSubscription) getTopic(topicName, false)
                         .get().get().getSubscription(subName);
-        return  (ManagedCursorImpl) subscription_.getCursor();
+        return  (ManagedCursorImpl) subscription.getCursor();
     }
 
     private void waitMarkDeleteLargeAndEquals(String topicName, String subName, final long markDeletedLedgerId,
@@ -166,9 +151,10 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
         });
     }
 
+    @SuppressWarnings("unchecked")
     private List<MessageIdImpl>[] sendManyMessages(String topicName, int ledgerCount, int messageCountPerLedger,
                                                    int messageCountPerEntry) throws Exception {
-        List<MessageIdImpl>[] messageIds = new List[ledgerCount];
+        @SuppressWarnings({"unchecked", "rawtypes"})        List<MessageIdImpl>[] messageIds = new List[ledgerCount];
         for (int i = 0; i < ledgerCount; i++){
             admin.topics().unload(topicName);
             if (messageCountPerEntry == 1) {
@@ -229,16 +215,16 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
         }
         producer.close();
         FutureUtil.waitForAll(messageIdFutures).get();
-        return messageIdFutures.stream().map(f -> (MessageIdImpl)f.join()).collect(Collectors.toList());
+        return messageIdFutures.stream().map(f -> (MessageIdImpl) f.join()).collect(Collectors.toList());
     }
 
     private ConsumerAndReceivedMessages waitConsumeAndAllMessages(String topicName, String subName,
                                                             final boolean enabledBatch,
                                                             boolean ack) throws Exception {
         List<MessageIdImpl> messageIds = new ArrayList<>();
-        final Consumer consumer = createConsumer(topicName, subName, enabledBatch);
+        final Consumer<?> consumer = createConsumer(topicName, subName, enabledBatch);
         while (true){
-            Message message = consumer.receive(5, TimeUnit.SECONDS);
+            Message<?> message = consumer.receive(5, TimeUnit.SECONDS);
             if (message != null){
                 messageIds.add((MessageIdImpl) message.getMessageId());
                 if (ack) {
@@ -254,13 +240,15 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
 
     @AllArgsConstructor
     private static class ConsumerAndReceivedMessages {
-        private Consumer consumer;
+        private Consumer<?> consumer;
         private List<MessageIdImpl>[] messageIds;
     }
 
+    @SuppressWarnings("unchecked")
     private List<MessageIdImpl>[] sortMessageId(List<MessageIdImpl> messageIds, boolean enabledBatch){
         Map<Long, List<MessageIdImpl>> map = messageIds.stream().collect(Collectors.groupingBy(v -> v.getLedgerId()));
         TreeMap<Long, List<MessageIdImpl>> sortedMap = new TreeMap<>(map);
+        @SuppressWarnings({"unchecked", "rawtypes"})
         List<MessageIdImpl>[] res = new List[sortedMap.size()];
         Iterator<Map.Entry<Long, List<MessageIdImpl>>> iterator = sortedMap.entrySet().iterator();
         for (int i = 0; i < sortedMap.size(); i++){
@@ -271,11 +259,11 @@ public class LedgerLostAndSkipNonRecoverableTest extends ProducerConsumerBase {
                 if (enabledBatch){
                     BatchMessageIdImpl mb1 = (BatchMessageIdImpl) m1;
                     BatchMessageIdImpl mb2 = (BatchMessageIdImpl) m2;
-                    return (int) (mb1.getLedgerId() * 1000000 + mb1.getEntryId() * 1000 + mb1.getBatchIndex() -
-                            mb2.getLedgerId() * 1000000 + mb2.getEntryId() * 1000 + mb2.getBatchIndex());
+                    return (int) (mb1.getLedgerId() * 1000000 + mb1.getEntryId() * 1000 + mb1.getBatchIndex()
+                            - mb2.getLedgerId() * 1000000 + mb2.getEntryId() * 1000 + mb2.getBatchIndex());
                 }
-                return (int) (m1.getLedgerId() * 1000 + m1.getEntryId() -
-                        m2.getLedgerId() * 1000 + m2.getEntryId());
+                return (int) (m1.getLedgerId() * 1000 + m1.getEntryId()
+                        - m2.getLedgerId() * 1000 + m2.getEntryId());
             });
         }
         return res;

@@ -33,6 +33,7 @@ import org.apache.pulsar.common.util.ObjectMapperFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@SuppressWarnings("deprecation")
 public class ProducerStatsRecorderImpl implements ProducerStatsRecorder {
 
     private static final long serialVersionUID = 1L;
@@ -332,7 +333,7 @@ public class ProducerStatsRecorderImpl implements ProducerStatsRecorder {
 
     @Override
     public int getPendingQueueSize() {
-        return producer.getPendingQueueSize();
+        return producer != null ? producer.getPendingQueueSize() : 0;
     }
 
     public void cancelStatsTimeout() {

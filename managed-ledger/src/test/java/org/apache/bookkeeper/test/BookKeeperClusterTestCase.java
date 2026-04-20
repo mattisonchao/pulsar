@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 /**
  * This file is derived from BookKeeperClusterTestCase from Apache BookKeeper
  * http://bookkeeper.apache.org
@@ -26,7 +27,6 @@ package org.apache.bookkeeper.test;
 import static org.apache.bookkeeper.util.BookKeeperConstants.AVAILABLE_NODE;
 import static org.apache.pulsar.common.util.PortManager.nextLockedFreePort;
 import static org.testng.Assert.assertFalse;
-
 import com.google.common.base.Stopwatch;
 import java.io.File;
 import java.io.IOException;
@@ -49,8 +49,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.bookkeeper.bookie.Bookie;
 import org.apache.bookkeeper.bookie.BookieException;
-import org.apache.bookkeeper.client.BookKeeperTestClient;
-import org.apache.bookkeeper.client.TestStatsProvider;
+import org.apache.bookkeeper.client.PulsarBookKeeperTestClient;
+import org.apache.bookkeeper.client.PulsarBookKeeperTestStatsProvider;
 import org.apache.bookkeeper.common.allocator.PoolingPolicy;
 import org.apache.bookkeeper.conf.AbstractConfiguration;
 import org.apache.bookkeeper.conf.ClientConfiguration;
@@ -73,9 +73,9 @@ import org.apache.zookeeper.ZooKeeper;
 import org.awaitility.Awaitility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testng.annotations.AfterTest;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.BeforeTest;
 
 /**
  * A class runs several bookie servers for testing.
@@ -102,7 +102,7 @@ public abstract class BookKeeperClusterTestCase {
     private final List<ServerTester> servers = new LinkedList<>();
 
     protected int numBookies;
-    protected BookKeeperTestClient bkc;
+    protected PulsarBookKeeperTestClient bkc;
     protected boolean useUUIDasBookieId = true;
 
     /*
@@ -148,7 +148,7 @@ public abstract class BookKeeperClusterTestCase {
         }
     }
 
-    @BeforeTest(alwaysRun = true)
+    @BeforeClass(alwaysRun = true)
     public void setUp() throws Exception {
         setUp(getLedgersRootPath());
     }
@@ -187,7 +187,7 @@ public abstract class BookKeeperClusterTestCase {
         return "";
     }
 
-    @AfterTest(alwaysRun = true)
+    @AfterClass(alwaysRun = true)
     public void tearDown() throws Exception {
         boolean failed = false;
         for (Throwable e : asyncExceptions) {
@@ -268,7 +268,7 @@ public abstract class BookKeeperClusterTestCase {
         baseClientConf.setAllocatorPoolingPolicy(PoolingPolicy.UnpooledHeap);
 
         if (numBookies > 0) {
-            bkc = new BookKeeperTestClient(baseClientConf, new TestStatsProvider());
+            bkc = new PulsarBookKeeperTestClient(baseClientConf, new PulsarBookKeeperTestStatsProvider());
         }
 
         // Create Bookie Servers (B1, B2, B3)
@@ -685,7 +685,7 @@ public abstract class BookKeeperClusterTestCase {
         ServerTester tester = new ServerTester(conf);
 
         if (bkc == null) {
-            bkc = new BookKeeperTestClient(baseClientConf, new TestStatsProvider());
+            bkc = new PulsarBookKeeperTestClient(baseClientConf, new PulsarBookKeeperTestStatsProvider());
         }
 
         BookieId address = tester.getServer().getBookieId();
@@ -726,7 +726,7 @@ public abstract class BookKeeperClusterTestCase {
             throws Exception {
         ServerTester tester = new ServerTester(conf, b);
         if (bkc == null) {
-            bkc = new BookKeeperTestClient(baseClientConf, new TestStatsProvider());
+            bkc = new PulsarBookKeeperTestClient(baseClientConf, new PulsarBookKeeperTestStatsProvider());
         }
         BookieId address = tester.getServer().getBookieId();
         Future<?> waitForBookie = conf.isForceReadOnlyBookie()
@@ -847,11 +847,11 @@ public abstract class BookKeeperClusterTestCase {
         servers.forEach(t -> t.getStatsProvider().clear());
     }
 
-    public TestStatsProvider getStatsProvider(BookieId addr) throws UnknownHostException {
+    public PulsarBookKeeperTestStatsProvider getStatsProvider(BookieId addr) throws UnknownHostException {
         return byAddress(addr).get().getStatsProvider();
     }
 
-    public TestStatsProvider getStatsProvider(int index) throws Exception {
+    public PulsarBookKeeperTestStatsProvider getStatsProvider(int index) throws Exception {
         return servers.get(index).getStatsProvider();
     }
 

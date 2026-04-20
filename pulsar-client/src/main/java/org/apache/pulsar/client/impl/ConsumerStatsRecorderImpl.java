@@ -39,6 +39,7 @@ import org.apache.pulsar.common.util.ObjectMapperFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@SuppressWarnings("deprecation")
 public class ConsumerStatsRecorderImpl implements ConsumerStatsRecorder {
 
     private static final long serialVersionUID = 1L;
@@ -146,15 +147,16 @@ public class ConsumerStatsRecorderImpl implements ConsumerStatsRecorder {
 
                 receivedMsgsRate = currentNumMsgsReceived / elapsed;
                 receivedBytesRate = currentNumBytesReceived / elapsed;
+                int prefetchQueueSize = consumerImpl.incomingMessages.size();
                 if ((currentNumMsgsReceived | currentNumBytesReceived | currentNumReceiveFailed | currentNumAcksSent
-                        | currentNumAcksFailed) != 0) {
+                        | currentNumAcksFailed | prefetchQueueSize) != 0) {
                     log.info(
                             "[{}] [{}] [{}] Prefetched messages: {} --- "
                                     + "Consume throughput received: {} msgs/s --- {} Mbit/s --- "
                                     + "Ack sent rate: {} ack/s --- " + "Failed messages: {} --- batch messages: {} ---"
                                     + "Failed acks: {}",
                             consumerImpl.getTopic(), consumerImpl.getSubscription(), consumerImpl.consumerName,
-                            consumerImpl.incomingMessages.size(), THROUGHPUT_FORMAT.format(receivedMsgsRate),
+                            prefetchQueueSize, THROUGHPUT_FORMAT.format(receivedMsgsRate),
                             THROUGHPUT_FORMAT.format(receivedBytesRate * 8 / 1024 / 1024),
                             THROUGHPUT_FORMAT.format(currentNumAcksSent / elapsed), currentNumReceiveFailed,
                             currentNumBatchReceiveFailed, currentNumAcksFailed);
@@ -253,6 +255,7 @@ public class ConsumerStatsRecorderImpl implements ConsumerStatsRecorder {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public Map<Long, Integer> getMsgNumInSubReceiverQueue() {
         if (consumer instanceof MultiTopicsConsumerImpl) {
             List<ConsumerImpl<?>> consumerList = ((MultiTopicsConsumerImpl) consumer).getConsumers();

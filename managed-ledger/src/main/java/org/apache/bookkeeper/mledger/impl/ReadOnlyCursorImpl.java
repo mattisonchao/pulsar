@@ -26,7 +26,7 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionBound;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.ReadOnlyCursor;
-import org.apache.bookkeeper.mledger.proto.MLDataFormats;
+import org.apache.bookkeeper.mledger.proto.ManagedLedgerInfo;
 
 @Slf4j
 public class ReadOnlyCursorImpl extends ManagedCursorImpl implements ReadOnlyCursor {
@@ -40,6 +40,7 @@ public class ReadOnlyCursorImpl extends ManagedCursorImpl implements ReadOnlyCur
         } else {
             readPosition = startPosition;
         }
+        ledger.onCursorReadPositionUpdated(this, readPosition);
 
         if (ledger.getLastPosition().compareTo(readPosition) <= 0) {
             messagesConsumedCounter = 0;
@@ -53,17 +54,20 @@ public class ReadOnlyCursorImpl extends ManagedCursorImpl implements ReadOnlyCur
     @Override
     public void skipEntries(int numEntriesToSkip) {
         log.info("[{}] Skipping {} entries on read-only cursor {}", ledger.getName(), numEntriesToSkip, getName());
-        READ_POSITION_UPDATER.getAndUpdate(this, lastRead ->
+        Position updatedReadPosition = READ_POSITION_UPDATER.updateAndGet(this, lastRead ->
                 ledger.getPositionAfterN(lastRead, numEntriesToSkip, PositionBound.startIncluded).getNext());
+        ledger.onCursorReadPositionUpdated(this, updatedReadPosition);
     }
 
     @Override
     public void asyncClose(final AsyncCallbacks.CloseCallback callback, final Object ctx) {
         state = State.Closed;
+        closeWaitingCursor();
+        setInactive();
         callback.closeComplete(ctx);
     }
 
-    public MLDataFormats.ManagedLedgerInfo.LedgerInfo getCurrentLedgerInfo() {
+    public ManagedLedgerInfo.LedgerInfo getCurrentLedgerInfo() {
         return this.ledger.getLedgersInfo().get(this.readPosition.getLedgerId());
     }
 

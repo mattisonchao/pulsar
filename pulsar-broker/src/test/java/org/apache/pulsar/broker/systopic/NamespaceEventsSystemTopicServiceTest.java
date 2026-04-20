@@ -18,10 +18,9 @@
  */
 package org.apache.pulsar.broker.systopic;
 
-import static org.apache.pulsar.broker.service.SystemTopicBasedTopicPoliciesService.getEventKey;
+import static org.apache.pulsar.broker.service.TopicPoliciesService.getEventKey;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-
 import com.google.common.collect.Sets;
 import java.util.HashSet;
 import lombok.Cleanup;
@@ -110,6 +109,7 @@ public class NamespaceEventsSystemTopicServiceTest extends MockedPulsarServiceBa
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     public void testSendAndReceiveNamespaceEvents() throws Exception {
         TopicPoliciesSystemTopicClient systemTopicClientForNamespace1 = systemTopicFactory
                 .createTopicPoliciesSystemTopicClient(NamespaceName.get(NAMESPACE1));
@@ -127,8 +127,9 @@ public class NamespaceEventsSystemTopicServiceTest extends MockedPulsarServiceBa
                 .policies(policies)
                 .build())
             .build();
-        systemTopicClientForNamespace1.newWriter().write(getEventKey(event), event);
+        systemTopicClientForNamespace1.newWriter().write(getEventKey(event, false), event);
         SystemTopicClient.Reader reader = systemTopicClientForNamespace1.newReader();
+        @Cleanup("release")
         Message<PulsarEvent> received = reader.readNext();
         log.info("Receive pulsar event from system topic : {}", received.getValue());
 
@@ -139,6 +140,7 @@ public class NamespaceEventsSystemTopicServiceTest extends MockedPulsarServiceBa
 
         // test new reader read
         SystemTopicClient.Reader reader1 = systemTopicClientForNamespace1.newReader();
+        @Cleanup("release")
         Message<PulsarEvent> received1 = reader1.readNext();
         log.info("Receive pulsar event from system topic : {}", received1.getValue());
         Assert.assertEquals(received1.getValue(), event);

@@ -46,13 +46,18 @@ public class MockAuthentication implements Authentication {
         return "mock";
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public AuthenticationDataProvider getAuthData() throws PulsarClientException {
         return new AuthenticationDataProvider() {
             @Override
-            public boolean hasDataForHttp() { return true; }
+            public boolean hasDataForHttp() {
+                return true;
+            }
             @Override
-            public String getHttpAuthType() { return "mock"; }
+            public String getHttpAuthType() {
+                return "mock";
+            }
             @Override
             public Set<Map.Entry<String, String>> getHttpHeaders() {
                 return Map.of("mockuser", user).entrySet();
@@ -68,6 +73,7 @@ public class MockAuthentication implements Authentication {
         };
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void configure(Map<String, String> authParams) {
         this.user = authParams.get("user");

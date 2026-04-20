@@ -519,22 +519,22 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
                     SchemaCompatibilityStrategy.ALWAYS_COMPATIBLE);
             fail("should have failed with authorization exception");
         } catch (Exception e) {
-            assertTrue(e.getMessage().startsWith("Unauthorized to validateTopicPolicyOperation " +
-                    "for operation [WRITE] on topic [" + topicName + "] on policy [SCHEMA_COMPATIBILITY_STRATEGY]"));
+            assertTrue(e.getMessage().startsWith("Unauthorized to validateTopicPolicyOperation "
+                    + "for operation [WRITE] on topic [" + topicName + "] on policy [SCHEMA_COMPATIBILITY_STRATEGY]"));
         }
         try {
             generalAdmin.topicPolicies().getSchemaCompatibilityStrategy(topicName, true);
             fail("should have failed with authorization exception");
         } catch (Exception e) {
-            assertTrue(e.getMessage().startsWith("Unauthorized to validateTopicPolicyOperation " +
-                    "for operation [READ] on topic [" + topicName + "] on policy [SCHEMA_COMPATIBILITY_STRATEGY]"));
+            assertTrue(e.getMessage().startsWith("Unauthorized to validateTopicPolicyOperation "
+                    + "for operation [READ] on topic [" + topicName + "] on policy [SCHEMA_COMPATIBILITY_STRATEGY]"));
         }
         try {
             generalAdmin.topicPolicies().getSchemaCompatibilityStrategy(topicName, false);
             fail("should have failed with authorization exception");
         } catch (Exception e) {
-            assertTrue(e.getMessage().startsWith("Unauthorized to validateTopicPolicyOperation " +
-                    "for operation [READ] on topic [" + topicName + "] on policy [SCHEMA_COMPATIBILITY_STRATEGY]"));
+            assertTrue(e.getMessage().startsWith("Unauthorized to validateTopicPolicyOperation "
+                    + "for operation [READ] on topic [" + topicName + "] on policy [SCHEMA_COMPATIBILITY_STRATEGY]"));
         }
 
         // The superUser or tenantAdministrator can access topic policy, so it can successfully write/read topic policy
@@ -553,6 +553,7 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     public void testUpdateTopicPropertiesAuthorization() throws Exception {
         log.info("-- Starting {} test --", methodName);
         cleanup();
@@ -660,7 +661,7 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         setup();
 
         AuthorizationService authorizationService = new AuthorizationService(conf, null);
-        TopicName topicName = TopicName.get("persistent://prop/cluster/ns/t1");
+        TopicName topicName = TopicName.get("persistent://prop/ns/t1");
         String role = "test-role";
         Assert.assertFalse(authorizationService.canProduce(topicName, role, null));
         Assert.assertFalse(authorizationService.canConsume(topicName, role, null, "sub1"));
@@ -720,9 +721,11 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         Assert.assertFalse(authorizationService.canConsume(topicName, role2, null, "sub1"));
 
         authorizationService.grantPermissionAsync(namespaceName, actions, role, null).get();
-        Assert.assertTrue(authorizationService.allowNamespaceOperationAsync(namespaceName, NamespaceOperation.GET_TOPIC, role, null).get());
+        Assert.assertTrue(authorizationService.allowNamespaceOperationAsync(namespaceName,
+                NamespaceOperation.GET_TOPIC, role, null).get());
         authorizationService.revokePermissionAsync(namespaceName, role).get();
-        Assert.assertFalse(authorizationService.allowNamespaceOperationAsync(namespaceName, NamespaceOperation.GET_TOPIC, role, null).get());
+        Assert.assertFalse(authorizationService.allowNamespaceOperationAsync(namespaceName,
+                NamespaceOperation.GET_TOPIC, role, null).get());
         log.info("-- Exiting {} test --", methodName);
     }
 
@@ -734,7 +737,7 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         setup();
 
         AuthorizationService authorizationService = new AuthorizationService(conf, null);
-        TopicName topicName = TopicName.get("persistent://prop/cluster/ns/t1");
+        TopicName topicName = TopicName.get("persistent://prop/ns/t1");
         String role = "test-role";
         authorizationService.grantPermissionAsync(topicName, null, role, "auth-json").get();
         Assert.assertEquals(TestAuthorizationProviderWithGrantPermission.authDataJson, "auth-json");
@@ -811,6 +814,7 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
 
         log.info("-- Exiting {} test --", methodName);
     }
+    @SuppressWarnings("deprecation")
 
     public static class ClientAuthentication implements Authentication {
         String user;
@@ -863,6 +867,7 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         }
 
     }
+    @SuppressWarnings("deprecation")
 
     public static class TestAuthenticationProvider implements AuthenticationProvider {
 
@@ -922,17 +927,20 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         }
 
         @Override
-        public CompletableFuture<Boolean> allowFunctionOpsAsync(NamespaceName namespaceName, String role, AuthenticationDataSource authenticationData) {
+        public CompletableFuture<Boolean> allowFunctionOpsAsync(NamespaceName namespaceName, String role,
+                                                                AuthenticationDataSource authenticationData) {
             return null;
         }
 
         @Override
-        public CompletableFuture<Boolean> allowSourceOpsAsync(NamespaceName namespaceName, String role, AuthenticationDataSource authenticationData) {
+        public CompletableFuture<Boolean> allowSourceOpsAsync(NamespaceName namespaceName, String role,
+                                                              AuthenticationDataSource authenticationData) {
             return null;
         }
 
         @Override
-        public CompletableFuture<Boolean> allowSinkOpsAsync(NamespaceName namespaceName, String role, AuthenticationDataSource authenticationData) {
+        public CompletableFuture<Boolean> allowSinkOpsAsync(NamespaceName namespaceName, String role,
+                                                            AuthenticationDataSource authenticationData) {
             return null;
         }
 
@@ -961,7 +969,8 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         }
 
         @Override
-        public CompletableFuture<Boolean> isTenantAdmin(String tenant, String role, TenantInfo tenantInfo, AuthenticationDataSource authenticationData) {
+        public CompletableFuture<Boolean> isTenantAdmin(String tenant, String role, TenantInfo tenantInfo,
+                                                        AuthenticationDataSource authenticationData) {
             return CompletableFuture.completedFuture(true);
         }
 

@@ -53,7 +53,7 @@ import java.util.concurrent.CompletableFuture;
 import javax.naming.AuthenticationException;
 import javax.net.ssl.SSLSession;
 import okhttp3.OkHttpClient;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationProvider;
@@ -148,6 +148,7 @@ public class AuthenticationProviderOpenID implements AuthenticationProvider {
 
     private AuthenticationMetrics authenticationMetrics;
 
+    @SuppressWarnings("deprecation")
     @Override
     public void initialize(ServiceConfiguration config) throws IOException {
         initialize(Context.builder().config(config).build());
@@ -183,6 +184,7 @@ public class AuthenticationProviderOpenID implements AuthenticationProvider {
                     .build();
         }
         AsyncHttpClientConfig clientConfig = new DefaultAsyncHttpClientConfig.Builder()
+                .setCookieStore(null)
                 .setConnectTimeout(connectionTimeout)
                 .setReadTimeout(readTimeout)
                 .setSslContext(sslContext)
@@ -444,7 +446,6 @@ public class AuthenticationProviderOpenID implements AuthenticationProvider {
                 .withAnyOfAudience(allowedAudiences)
                 .withClaimPresence(RegisteredClaims.ISSUED_AT)
                 .withClaimPresence(RegisteredClaims.EXPIRES_AT)
-                .withClaimPresence(RegisteredClaims.NOT_BEFORE)
                 .withClaimPresence(RegisteredClaims.SUBJECT);
 
         if (isRoleClaimNotSubject) {

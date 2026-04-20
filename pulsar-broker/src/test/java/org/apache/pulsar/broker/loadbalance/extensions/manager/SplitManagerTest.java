@@ -41,7 +41,7 @@ import org.testng.annotations.Test;
 @Slf4j
 @Test(groups = "broker")
 public class SplitManagerTest {
-    
+
     String bundle = "bundle-1";
 
     String dstBroker = "broker-1";
@@ -194,6 +194,7 @@ public class SplitManagerTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, CompletableFuture<Void>> getinFlightUnloadRequests(SplitManager manager)
             throws IllegalAccessException {
         var inFlightUnloadRequest =

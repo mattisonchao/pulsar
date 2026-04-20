@@ -83,7 +83,7 @@ public class MLPendingAckStoreTest extends TransactionTestBase {
         PersistentTopic persistentTopic = (PersistentTopic) getPulsarServiceList().get(0).getBrokerService()
                 .getTopic(topic, false).get().get();
         getPulsarServiceList().get(0).getConfig().setTransactionPendingAckLogIndexMinLag(pendingAckLogIndexMinLag);
-        CompletableFuture<Subscription> subscriptionFuture = persistentTopic .createSubscription("test",
+        CompletableFuture<Subscription> subscriptionFuture = persistentTopic.createSubscription("test",
                 CommandSubscribe.InitialPosition.Earliest, false, null);
         PersistentSubscription subscription = (PersistentSubscription) subscriptionFuture.get();
         ManagedCursor managedCursor = subscription.getCursor();
@@ -112,7 +112,8 @@ public class MLPendingAckStoreTest extends TransactionTestBase {
         serviceConfiguration.setTransactionPendingAckBatchedWriteMaxDelayInMillis(
                 defaultConfig.getTransactionPendingAckBatchedWriteMaxDelayInMillis()
         );
-        serviceConfiguration.setTransactionPendingAckBatchedWriteEnabled(defaultConfig.isTransactionPendingAckBatchedWriteEnabled());
+        serviceConfiguration.setTransactionPendingAckBatchedWriteEnabled(defaultConfig
+                .isTransactionPendingAckBatchedWriteEnabled());
         admin.topics().delete("persistent://" + NAMESPACE1 + "/test-txn-topic", true);
     }
 
@@ -229,7 +230,7 @@ public class MLPendingAckStoreTest extends TransactionTestBase {
         when(pendingAckHandle.changeToReadyState()).thenReturn(true);
         // Process controller, mark the replay task already finish.
         final AtomicInteger processController = new AtomicInteger();
-        doAnswer(new Answer() {
+        doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocation) throws Throwable {
                 processController.incrementAndGet();
@@ -291,7 +292,7 @@ public class MLPendingAckStoreTest extends TransactionTestBase {
         long recordCountInCurrentLoop = 0;
         LinkedHashSet<Long> indexes = new LinkedHashSet<>();
         for (int i = 0; i < positionList.size(); i++){
-            recordCountInCurrentLoop ++;
+            recordCountInCurrentLoop++;
             long value = positionList.get(i);
             if (skipSet.contains(value)){
                 continue;

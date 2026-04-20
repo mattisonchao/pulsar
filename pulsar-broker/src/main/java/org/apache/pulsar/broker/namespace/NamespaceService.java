@@ -40,19 +40,18 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import javax.annotation.Nullable;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
@@ -114,6 +113,7 @@ import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.apache.pulsar.opentelemetry.annotations.PulsarDeprecatedMetric;
 import org.apache.pulsar.policies.data.loadbalancer.AdvertisedListener;
 import org.apache.pulsar.policies.data.loadbalancer.LocalBrokerData;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -142,12 +142,10 @@ public class NamespaceService implements AutoCloseable {
 
     public static final int BUNDLE_SPLIT_RETRY_LIMIT = 7;
     public static final String SLA_NAMESPACE_PROPERTY = "sla-monitor";
-    public static final Pattern HEARTBEAT_NAMESPACE_PATTERN = Pattern.compile("pulsar/[^/]+/([^:]+:\\d+)");
-    public static final Pattern HEARTBEAT_NAMESPACE_PATTERN_V2 = Pattern.compile("pulsar/([^:]+:\\d+)");
-    public static final Pattern SLA_NAMESPACE_PATTERN = Pattern.compile(SLA_NAMESPACE_PROPERTY + "/[^/]+/([^:]+:\\d+)");
-    public static final String HEARTBEAT_NAMESPACE_FMT = "pulsar/%s/%s";
-    public static final String HEARTBEAT_NAMESPACE_FMT_V2 = "pulsar/%s";
-    public static final String SLA_NAMESPACE_FMT = SLA_NAMESPACE_PROPERTY + "/%s/%s";
+    public static final Pattern HEARTBEAT_NAMESPACE_PATTERN = Pattern.compile("pulsar/([^:]+:\\d+)");
+    public static final Pattern SLA_NAMESPACE_PATTERN = Pattern.compile(SLA_NAMESPACE_PROPERTY + "/([^:]+:\\d+)");
+    public static final String HEARTBEAT_NAMESPACE_FMT = "pulsar/%s";
+    public static final String SLA_NAMESPACE_FMT = SLA_NAMESPACE_PROPERTY + "/%s";
 
     private final Map<ClusterDataImpl, PulsarClientImpl> namespaceClients = new ConcurrentHashMap<>();
 
@@ -393,12 +391,6 @@ public class NamespaceService implements AutoCloseable {
                     getHeartbeatNamespace(brokerId, config));
         }
 
-        // ensure that we own the heartbeat namespace
-        if (registerNamespace(getHeartbeatNamespaceV2(brokerId, config), true)) {
-            LOG.info("added heartbeat namespace name in local cache: ns={}",
-                    getHeartbeatNamespaceV2(brokerId, config));
-        }
-
         // we may not need strict ownership checking for bootstrap names for now
         for (String namespace : config.getBootstrapNamespaces()) {
             if (registerNamespace(NamespaceName.get(namespace), false)) {
@@ -417,6 +409,7 @@ public class NamespaceService implements AutoCloseable {
      * @return true if the namespace was successfully registered, false otherwise
      * @throws PulsarServerException if an error occurs when registering the namespace
      */
+    @SuppressWarnings("deprecation")
     public boolean registerNamespace(NamespaceName nsname, boolean ensureOwned) throws PulsarServerException {
         try {
             // all pre-registered namespace is assumed to have bundles disabled
@@ -548,10 +541,6 @@ public class NamespaceService implements AutoCloseable {
     public CompletableFuture<String> getHeartbeatOrSLAMonitorBrokerId(
             ServiceUnitId serviceUnit, Function<String, CompletableFuture<Boolean>> isBrokerActive) {
         String candidateBroker = NamespaceService.checkHeartbeatNamespace(serviceUnit);
-        if (candidateBroker != null) {
-            return CompletableFuture.completedFuture(candidateBroker);
-        }
-        candidateBroker = NamespaceService.checkHeartbeatNamespaceV2(serviceUnit);
         if (candidateBroker != null) {
             return CompletableFuture.completedFuture(candidateBroker);
         }
@@ -858,6 +847,7 @@ public class NamespaceService implements AutoCloseable {
         return pulsar.getLocalMetadataStore().exists(ServiceUnitUtils.path(bundle));
     }
 
+    @SuppressWarnings("deprecation")
     public CompletableFuture<Map<String, NamespaceOwnershipStatus>> getOwnedNameSpacesStatusAsync() {
        return pulsar.getPulsarResources().getNamespaceResources().getIsolationPolicies()
                .getIsolationDataPoliciesAsync(pulsar.getConfiguration().getClusterName())
@@ -1145,8 +1135,12 @@ public class NamespaceService implements AutoCloseable {
      */
     public CompletableFuture<Void> updateNamespaceBundlesForPolicies(NamespaceName nsname,
                                                                       NamespaceBundles nsBundles) {
-        Objects.requireNonNull(nsname);
-        Objects.requireNonNull(nsBundles);
+        if (nsname == null) {
+            return FutureUtil.failedFuture(new NullPointerException("Expected NamespaceName should not be null"));
+        }
+        if (nsBundles == null) {
+            return FutureUtil.failedFuture(new NullPointerException("Expected NamespaceBundles should not be null"));
+        }
 
         return pulsar.getPulsarResources().getNamespaceResources().getPoliciesAsync(nsname).thenCompose(policies -> {
             if (policies.isPresent()) {
@@ -1172,8 +1166,12 @@ public class NamespaceService implements AutoCloseable {
      * @param nsBundles the new namespace bundles
      */
     public CompletableFuture<Void> updateNamespaceBundles(NamespaceName nsname, NamespaceBundles nsBundles) {
-        Objects.requireNonNull(nsname);
-        Objects.requireNonNull(nsBundles);
+        if (nsname == null) {
+            return FutureUtil.failedFuture(new NullPointerException("Expected NamespaceName should not be null"));
+        }
+        if (nsBundles == null) {
+            return FutureUtil.failedFuture(new NullPointerException("Expected NamespaceBundles should not be null"));
+        }
 
         LocalPolicies localPolicies = nsBundles.toLocalPolicies();
 
@@ -1185,6 +1183,7 @@ public class NamespaceService implements AutoCloseable {
         return ownershipCache;
     }
 
+    @SuppressWarnings("deprecation")
     public Set<NamespaceBundle> getOwnedServiceUnits() {
         if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)) {
             ExtensibleLoadManagerImpl extensibleLoadManager = ExtensibleLoadManagerImpl.get(loadManager.get());
@@ -1225,35 +1224,6 @@ public class NamespaceService implements AutoCloseable {
                 new IllegalArgumentException("Invalid class of NamespaceBundle: " + suName.getClass().getName()));
     }
 
-    /**
-     * @deprecated This method is only used in test now.
-     */
-    @Deprecated
-    public boolean isServiceUnitActive(TopicName topicName) {
-        try {
-            return isServiceUnitActiveAsync(topicName).get(pulsar.getConfig()
-                    .getMetadataStoreOperationTimeoutSeconds(), SECONDS);
-        } catch (InterruptedException | ExecutionException | TimeoutException e) {
-            LOG.warn("Unable to find OwnedBundle for topic in time - [{}]", topicName, e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    public CompletableFuture<Boolean> isServiceUnitActiveAsync(TopicName topicName) {
-        // TODO: Add unit tests cover it.
-        if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)) {
-            return getBundleAsync(topicName)
-                    .thenCompose(bundle -> loadManager.get().checkOwnershipAsync(Optional.of(topicName), bundle));
-        }
-        return getBundleAsync(topicName).thenCompose(bundle -> {
-            Optional<CompletableFuture<OwnedBundle>> optionalFuture = ownershipCache.getOwnedBundleAsync(bundle);
-            if (optionalFuture.isEmpty()) {
-                return CompletableFuture.completedFuture(false);
-            }
-            return optionalFuture.get().thenApply(ob -> ob != null && ob.isActive());
-        });
-    }
-
     private CompletableFuture<Boolean> isNamespaceOwnedAsync(NamespaceName fqnn) {
         // TODO: Add unit tests cover it.
         if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)) {
@@ -1274,13 +1244,16 @@ public class NamespaceService implements AutoCloseable {
     }
 
     public CompletableFuture<Boolean> checkTopicOwnership(TopicName topicName) {
-        // TODO: Add unit tests cover it.
+        return getBundleAsync(topicName).thenCompose(bundle -> checkBundleOwnership(topicName, bundle));
+    }
+
+    public CompletableFuture<Boolean> checkBundleOwnership(TopicName topicName, NamespaceBundle bundle) {
         if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)) {
-            return getBundleAsync(topicName)
-                    .thenCompose(bundle -> loadManager.get().checkOwnershipAsync(Optional.of(topicName), bundle));
+            // TODO: Add unit tests cover it.
+            return loadManager.get().checkOwnershipAsync(Optional.of(topicName), bundle);
+        } else {
+            return ownershipCache.checkOwnershipAsync(bundle);
         }
-        return getBundleAsync(topicName)
-                .thenCompose(ownershipCache::checkOwnershipAsync);
     }
 
     public CompletableFuture<Void> removeOwnedServiceUnitAsync(NamespaceBundle nsBundle) {
@@ -1409,20 +1382,50 @@ public class NamespaceService implements AutoCloseable {
     }
 
     /***
-     * Check topic exists( partitioned or non-partitioned ).
+     * Checks whether the topic exists( partitioned or non-partitioned ).
      */
+    public CompletableFuture<TopicExistsInfo> checkTopicExistsAsync(TopicName topic) {
+        return checkTopicExists(topic);
+    }
+
+    /**
+     * Checks whether the topic exists( partitioned or non-partitioned ).
+     *
+     * @deprecated This method uses a misleading synchronous name for an asynchronous operation.
+     *             Use {@link #checkTopicExistsAsync(TopicName topic)} instead.
+     *
+     * @see #checkTopicExistsAsync(TopicName topic)
+     */
+    @Deprecated
     public CompletableFuture<TopicExistsInfo> checkTopicExists(TopicName topic) {
-        return pulsar.getBrokerService()
-            .fetchPartitionedTopicMetadataAsync(TopicName.get(topic.toString()))
-            .thenCompose(metadata -> {
-                if (metadata.partitions > 0) {
-                    return CompletableFuture.completedFuture(
-                            TopicExistsInfo.newPartitionedTopicExists(metadata.partitions));
-                }
-                return checkNonPartitionedTopicExists(topic)
-                    .thenApply(b -> b ? TopicExistsInfo.newNonPartitionedTopicExists()
-                            : TopicExistsInfo.newTopicNotExists());
-            });
+        // Exclude the heartbeat topic.
+        if (isHeartbeatNamespace(topic)) {
+            return CompletableFuture.completedFuture(TopicExistsInfo.newNonPartitionedTopicExists());
+        }
+        // For non-persistent/persistent partitioned topic, which has metadata.
+        return pulsar.getBrokerService().fetchPartitionedTopicMetadataAsync(
+                        topic.isPartitioned() ? TopicName.get(topic.getPartitionedTopicName()) : topic)
+                .thenCompose(metadata -> {
+                    // When the topic has metadata:
+                    // - The topic name is non-partitioned, which means that the topic exists.
+                    // - The topic name is partitioned, please check the specific partition.
+                    if (metadata.partitions > 0) {
+                        if (!topic.isPartitioned()) {
+                            return CompletableFuture.completedFuture(
+                                    TopicExistsInfo.newPartitionedTopicExists(metadata.partitions));
+                        }
+                        if (!topic.isPersistent()) {
+                            // A non-persistent partitioned topic contains only metadata.
+                            // Since no actual partitions are created, there's no need to check under /managed-ledgers.
+                            return CompletableFuture.completedFuture(topic.getPartitionIndex() < metadata.partitions
+                                    ? TopicExistsInfo.newNonPartitionedTopicExists()
+                                    : TopicExistsInfo.newTopicNotExists());
+                        }
+                    }
+                    return checkNonPartitionedTopicExists(topic).thenApply(
+                            b -> b ? TopicExistsInfo.newNonPartitionedTopicExists() :
+                                    TopicExistsInfo.newTopicNotExists());
+                });
     }
 
     /***
@@ -1443,12 +1446,12 @@ public class NamespaceService implements AutoCloseable {
      */
     public CompletableFuture<Boolean> checkNonPersistentNonPartitionedTopicExists(String topic) {
         TopicName topicName = TopicName.get(topic);
-        // "non-partitioned & non-persistent" topics only exist on the owner broker.
+        // "non-partitioned & non-persistent" topics only exist on the cache of the owner broker.
         return checkTopicOwnership(TopicName.get(topic)).thenCompose(isOwned -> {
             // The current broker is the owner.
             if (isOwned) {
                CompletableFuture<Optional<Topic>> nonPersistentTopicFuture = pulsar.getBrokerService()
-                       .getTopic(topic, false);
+                       .getTopics().get(topic);
                if (nonPersistentTopicFuture != null) {
                    return nonPersistentTopicFuture.thenApply(Optional::isPresent);
                } else {
@@ -1525,21 +1528,49 @@ public class NamespaceService implements AutoCloseable {
         }
     }
 
+    public CompletableFuture<List<String>> getListOfTopicsByProperties(NamespaceName namespaceName, Mode mode,
+                                                                       Map<String, String> properties) {
+       return pulsar.getPulsarResourcesExtended().listTopicOfNamespace(namespaceName, mode, properties);
+    }
+
+    public CompletableFuture<List<String>> getListOfUserTopicsByProperties(NamespaceName namespaceName, Mode mode,
+                                                                           Map<String, String> properties) {
+        return getListOfUserTopicsInternal(cacheKeyWithProperties(namespaceName, mode, properties),
+            () -> getListOfTopicsByProperties(namespaceName, mode, properties));
+    }
+
     public CompletableFuture<List<String>> getListOfUserTopics(NamespaceName namespaceName, Mode mode) {
-        String key = String.format("%s://%s", mode, namespaceName);
+        return getListOfUserTopicsInternal(cacheKeyWithProperties(namespaceName, mode, null),
+            () -> getListOfTopics(namespaceName, mode));
+    }
+
+    private CompletableFuture<List<String>> getListOfUserTopicsInternal(
+        String key,
+        Supplier<CompletableFuture<List<String>>> topicsSupplier) {
         final MutableBoolean initializedByCurrentThread = new MutableBoolean();
         CompletableFuture<List<String>> queryRes = inProgressQueryUserTopics.computeIfAbsent(key, k -> {
             initializedByCurrentThread.setTrue();
-            return getListOfTopics(namespaceName, mode).thenApplyAsync(list -> {
-                return TopicList.filterSystemTopic(list);
-            }, pulsar.getExecutor());
+            return topicsSupplier.get().thenApplyAsync(TopicList::filterSystemTopic, pulsar.getExecutor());
         });
-        if (initializedByCurrentThread.getValue()) {
+        if (initializedByCurrentThread.booleanValue()) {
             queryRes.whenComplete((ignore, ex) -> {
                 inProgressQueryUserTopics.remove(key, queryRes);
             });
         }
         return queryRes;
+    }
+
+    private String cacheKeyWithProperties(NamespaceName namespaceName, Mode mode,
+                                          @Nullable Map<String, String> properties) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(mode).append("://").append(namespaceName);
+        if (properties != null && !properties.isEmpty()) {
+            Set<String> keys = new TreeSet<>(properties.keySet());
+            for (String key : keys) {
+                sb.append("|").append(key).append("=").append(properties.get(key));
+            }
+        }
+        return sb.toString();
     }
 
     public CompletableFuture<List<String>> getAllPartitions(NamespaceName namespaceName) {
@@ -1635,6 +1666,7 @@ public class NamespaceService implements AutoCloseable {
                 .thenApply(GetTopicsResult::getTopics);
     }
 
+    @SuppressWarnings("deprecation")
     public PulsarClientImpl getNamespaceClient(ClusterDataImpl cluster) {
         PulsarClientImpl client = namespaceClients.get(cluster);
         if (client != null) {
@@ -1730,31 +1762,17 @@ public class NamespaceService implements AutoCloseable {
     }
 
     public static NamespaceName getHeartbeatNamespace(String lookupBroker, ServiceConfiguration config) {
-        return NamespaceName.get(String.format(HEARTBEAT_NAMESPACE_FMT, config.getClusterName(), lookupBroker));
-    }
-
-    public static NamespaceName getHeartbeatNamespaceV2(String lookupBroker, ServiceConfiguration config) {
-        return NamespaceName.get(String.format(HEARTBEAT_NAMESPACE_FMT_V2, lookupBroker));
+        return NamespaceName.get(String.format(HEARTBEAT_NAMESPACE_FMT, lookupBroker));
     }
 
     public static NamespaceName getSLAMonitorNamespace(String lookupBroker, ServiceConfiguration config) {
-        return NamespaceName.get(String.format(SLA_NAMESPACE_FMT, config.getClusterName(), lookupBroker));
+        return NamespaceName.get(String.format(SLA_NAMESPACE_FMT, lookupBroker));
     }
 
     public static String checkHeartbeatNamespace(ServiceUnitId ns) {
         Matcher m = HEARTBEAT_NAMESPACE_PATTERN.matcher(ns.getNamespaceObject().toString());
         if (m.matches()) {
             LOG.debug("Heartbeat namespace matched the lookup namespace {}", ns.getNamespaceObject().toString());
-            return m.group(1);
-        } else {
-            return null;
-        }
-    }
-
-    public static String checkHeartbeatNamespaceV2(ServiceUnitId ns) {
-        Matcher m = HEARTBEAT_NAMESPACE_PATTERN_V2.matcher(ns.getNamespaceObject().toString());
-        if (m.matches()) {
-            LOG.debug("Heartbeat namespace v2 matched the lookup namespace {}", ns.getNamespaceObject().toString());
             return m.group(1);
         } else {
             return null;
@@ -1773,8 +1791,7 @@ public class NamespaceService implements AutoCloseable {
     public static boolean isSystemServiceNamespace(String namespace) {
         return SYSTEM_NAMESPACE.toString().equals(namespace)
                 || SLA_NAMESPACE_PATTERN.matcher(namespace).matches()
-                || HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches()
-                || HEARTBEAT_NAMESPACE_PATTERN_V2.matcher(namespace).matches();
+                || HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches();
     }
 
     /**
@@ -1784,14 +1801,12 @@ public class NamespaceService implements AutoCloseable {
      */
     public static boolean isSLAOrHeartbeatNamespace(String namespace) {
         return SLA_NAMESPACE_PATTERN.matcher(namespace).matches()
-                || HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches()
-                || HEARTBEAT_NAMESPACE_PATTERN_V2.matcher(namespace).matches();
+                || HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches();
     }
 
     public static boolean isHeartbeatNamespace(ServiceUnitId ns) {
         String namespace = ns.getNamespaceObject().toString();
-        return HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches()
-                || HEARTBEAT_NAMESPACE_PATTERN_V2.matcher(namespace).matches();
+        return HEARTBEAT_NAMESPACE_PATTERN.matcher(namespace).matches();
     }
 
     public boolean registerSLANamespace() throws PulsarServerException {

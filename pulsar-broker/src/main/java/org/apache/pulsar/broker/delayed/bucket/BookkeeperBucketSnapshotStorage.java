@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar.broker.delayed.bucket;
 
-import com.google.protobuf.InvalidProtocolBufferException;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
@@ -28,7 +27,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import javax.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper;
@@ -41,6 +39,7 @@ import org.apache.pulsar.broker.delayed.proto.SnapshotMetadata;
 import org.apache.pulsar.broker.delayed.proto.SnapshotSegment;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.util.FutureUtil;
+import org.jspecify.annotations.NonNull;
 
 @Slf4j
 public class BookkeeperBucketSnapshotStorage implements BucketSnapshotStorage {
@@ -139,9 +138,9 @@ public class BookkeeperBucketSnapshotStorage implements BucketSnapshotStorage {
         ByteBuf entryBuffer = null;
         try {
             entryBuffer = ledgerEntry.getEntryBuffer();
-            return SnapshotMetadata.parseFrom(entryBuffer.nioBuffer());
-        } catch (InvalidProtocolBufferException e) {
-            throw new BucketSnapshotSerializationException(e);
+            SnapshotMetadata metadata = new SnapshotMetadata();
+            metadata.parseFrom(entryBuffer, entryBuffer.readableBytes());
+            return metadata;
         } finally {
             if (entryBuffer != null) {
                 entryBuffer.release();
@@ -165,7 +164,7 @@ public class BookkeeperBucketSnapshotStorage implements BucketSnapshotStorage {
         return snapshotMetadataList;
     }
 
-    @NotNull
+    @NonNull
     private CompletableFuture<LedgerHandle> createLedger(String bucketKey, String topicName, String cursorName) {
         CompletableFuture<LedgerHandle> future = new CompletableFuture<>();
         Map<String, byte[]> metadata = LedgerMetadataUtils.buildMetadataForDelayedIndexBucket(bucketKey,
@@ -213,7 +212,7 @@ public class BookkeeperBucketSnapshotStorage implements BucketSnapshotStorage {
                     } else {
                         future.complete(handle);
                     }
-                }, null
+                }, null, true
         );
         return future;
     }

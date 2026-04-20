@@ -22,6 +22,7 @@ import static org.apache.pulsar.broker.service.persistent.PersistentTopic.MESSAG
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Range;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -66,7 +67,6 @@ import org.apache.pulsar.broker.service.SendMessageInfo;
 import org.apache.pulsar.broker.service.SharedConsumerAssignor;
 import org.apache.pulsar.broker.service.StickyKeyConsumerSelector;
 import org.apache.pulsar.broker.service.Subscription;
-import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter.Type;
 import org.apache.pulsar.broker.transaction.exception.buffer.TransactionBufferException;
 import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
@@ -158,11 +158,11 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
                 : RedeliveryTrackerDisabled.REDELIVERY_TRACKER_DISABLED;
         this.readBatchSize = serviceConfig.getDispatcherMaxReadBatchSize();
         this.initializeDispatchRateLimiterIfNeeded();
-        this.assignor = new SharedConsumerAssignor(this::getNextConsumer, this::addMessageToReplay);
-        this.readFailureBackoff = new Backoff(
-                topic.getBrokerService().pulsar().getConfiguration().getDispatcherReadFailureBackoffInitialTimeInMs(),
-                TimeUnit.MILLISECONDS,
-                1, TimeUnit.MINUTES, 0, TimeUnit.MILLISECONDS);
+        this.assignor = new SharedConsumerAssignor(this::getNextConsumer, this::addMessageToReplay, subscription);
+        this.readFailureBackoff = Backoff.builder()
+                .initialDelay(Duration.ofMillis(topic.getBrokerService().pulsar().getConfiguration()
+                        .getDispatcherReadFailureBackoffInitialTimeInMs()))
+                .build();
     }
 
     @Override
@@ -476,54 +476,14 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
         // active-cursor reads message from cache rather from bookkeeper (2) if topic has reached message-rate
         // threshold: then schedule the read after MESSAGE_RATE_BACKOFF_MS
         if (serviceConfig.isDispatchThrottlingOnNonBacklogConsumerEnabled() || !cursor.isActive()) {
-            if (topic.getBrokerDispatchRateLimiter().isPresent()) {
-                DispatchRateLimiter brokerRateLimiter = topic.getBrokerDispatchRateLimiter().get();
+            if (hasAnyDispatchRateLimiter()) {
                 Pair<Integer, Long> calculateToRead =
-                        updateMessagesToRead(brokerRateLimiter, messagesToRead, bytesToRead);
-                messagesToRead = calculateToRead.getLeft();
-                bytesToRead = calculateToRead.getRight();
-                if (messagesToRead == 0 || bytesToRead == 0) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[{}] message-read exceeded broker message-rate {}/{}, schedule after a {}", name,
-                                brokerRateLimiter.getDispatchRateOnMsg(), brokerRateLimiter.getDispatchRateOnByte(),
-                                MESSAGE_RATE_BACKOFF_MS);
-                    }
-                    reScheduleRead();
-                    return Pair.of(-1, -1L);
-                }
-            }
-
-            if (topic.getDispatchRateLimiter().isPresent()) {
-                DispatchRateLimiter topicRateLimiter = topic.getDispatchRateLimiter().get();
-                Pair<Integer, Long> calculateToRead =
-                        updateMessagesToRead(topicRateLimiter, messagesToRead, bytesToRead);
-                messagesToRead = calculateToRead.getLeft();
-                bytesToRead = calculateToRead.getRight();
-                if (messagesToRead == 0 || bytesToRead == 0) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[{}] message-read exceeded topic message-rate {}/{}, schedule after a {}", name,
-                                topicRateLimiter.getDispatchRateOnMsg(), topicRateLimiter.getDispatchRateOnByte(),
-                                MESSAGE_RATE_BACKOFF_MS);
-                    }
-                    reScheduleRead();
-                    return Pair.of(-1, -1L);
-                }
-            }
-
-            if (dispatchRateLimiter.isPresent()) {
-                Pair<Integer, Long> calculateToRead =
-                        updateMessagesToRead(dispatchRateLimiter.get(), messagesToRead, bytesToRead);
-                messagesToRead = calculateToRead.getLeft();
-                bytesToRead = calculateToRead.getRight();
-                if (messagesToRead == 0 || bytesToRead == 0) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("[{}] message-read exceeded subscription message-rate {}/{}, schedule after a {}",
-                                name, dispatchRateLimiter.get().getDispatchRateOnMsg(),
-                                dispatchRateLimiter.get().getDispatchRateOnByte(),
-                                MESSAGE_RATE_BACKOFF_MS);
-                    }
-                    reScheduleRead();
-                    return Pair.of(-1, -1L);
+                        applyRateLimitsToMessagesAndBytesToRead(messagesToRead, bytesToRead);
+                if (calculateToRead.getLeft() == -1 && calculateToRead.getRight() == -1) {
+                    return calculateToRead;
+                } else {
+                    messagesToRead = calculateToRead.getLeft();
+                    bytesToRead = calculateToRead.getRight();
                 }
             }
         }
@@ -600,9 +560,8 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
 
     @Override
     protected void cancelPendingRead() {
-        if ((havePendingRead || havePendingReplayRead) && cursor.cancelPendingReadRequest()) {
+        if (havePendingRead && cursor.cancelPendingReadRequest()) {
             havePendingRead = false;
-            havePendingReplayRead = false;
         }
     }
 
@@ -900,7 +859,7 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
     public synchronized void readEntriesFailed(ManagedLedgerException exception, Object ctx) {
 
         ReadType readType = (ReadType) ctx;
-        long waitTimeMillis = readFailureBackoff.next();
+        long waitTimeMillis = readFailureBackoff.next().toMillis();
 
         // Do not keep reading more entries if the cursor is already closed.
         if (exception instanceof ManagedLedgerException.CursorAlreadyClosedException) {
@@ -1171,7 +1130,8 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
         if (!dispatchRateLimiter.isPresent() && DispatchRateLimiter.isDispatchRateEnabled(
                 topic.getSubscriptionDispatchRate(getSubscriptionName()))) {
             this.dispatchRateLimiter =
-                    Optional.of(new DispatchRateLimiter(topic, getSubscriptionName(), Type.SUBSCRIPTION));
+                    Optional.of(topic.getBrokerService().getDispatchRateLimiterFactory()
+                            .createSubscriptionDispatchRateLimiter(topic, getSubscriptionName()));
             return true;
         }
         return false;
@@ -1309,7 +1269,7 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
             return false;
         }
         // consider dispatch is stuck if : dispatcher has backlog, available-permits and there is no pending read
-        if (totalAvailablePermits > 0 && !havePendingReplayRead && !havePendingRead
+        if (isAtleastOneConsumerAvailable() && !havePendingReplayRead && !havePendingRead
                 && cursor.getNumberOfEntriesInBacklog(false) > 0) {
             log.warn("{}-{} Dispatcher is stuck and unblocking by issuing reads", topic.getName(), name);
             readMoreEntries();

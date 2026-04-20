@@ -29,7 +29,6 @@ import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
-
 import com.google.common.collect.Sets;
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -89,7 +88,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
         admin.tenants().createTenant("public",
                 new TenantInfoImpl(Sets.newHashSet("appid1", "appid2"), Sets.newHashSet("test")));
         admin.namespaces().createNamespace("public/default");
-        admin.namespaces().setNamespaceReplicationClusters("public/default", Sets.newHashSet("test"));
+        admin.namespaces().setNamespaceReplicationClusters("public/default", Sets.newHashSet("test"), false);
     }
 
     @AfterClass(alwaysRun = true)
@@ -129,7 +128,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
         try (Producer<byte[]> producer = builder.create()) {
             CompletableFuture<?> lastFuture = null;
             for (int i = keyStartPosition; i < keyStartPosition + count; i++) {
-                String key = "key"+ i;
+                String key = "key" + i;
                 byte[] data = ("my-message-" + i).getBytes();
                 lastFuture = producer.newMessage().key(key).value(data).sendAsync();
                 keys.add(key);
@@ -159,6 +158,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
      * 1. multi-partition topic, p1, p2 has new message, p3 has no new messages.
      * 2. Call new `refresh` API, it will be completed after read new messages.
      */
+    @SuppressWarnings("deprecation")
     @Test(dataProvider = "partition")
     public void testRefreshAPI(int partition) throws Exception {
         // 1. Prepare resource.
@@ -262,6 +262,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
         }
         Awaitility.await().untilAsserted(() -> assertTrue(completedExceptionally.get()));
     }
+    @SuppressWarnings("deprecation")
 
     @Test(timeOut = 30 * 1000)
     public void testTableView() throws Exception {
@@ -328,6 +329,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
         });
         assertEquals(tv.keySet(), keys);
     }
+    @SuppressWarnings("deprecation")
 
     @Test(timeOut = 30 * 1000, dataProvider = "topicDomain")
     public void testTableViewUpdatePartitions(String topicDomain) throws Exception {
@@ -369,6 +371,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
         });
         assertEquals(tv.keySet(), keys2);
     }
+    @SuppressWarnings("deprecation")
 
     @Test(timeOut = 30 * 1000, dataProvider = "topicDomain")
     public void testPublishNullValue(String topicDomain) throws Exception {
@@ -415,6 +418,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
     public static Object[][] partitioned() {
         return new Object[][] {{true}, {false}};
     }
+    @SuppressWarnings({"deprecation", "unchecked"})
 
     @Test(timeOut = 30 * 1000, dataProvider = "partitionedTopic")
     public void testAck(boolean partitionedTopic) throws Exception {
@@ -463,6 +467,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
 
 
     }
+    @SuppressWarnings("deprecation")
 
     @Test(timeOut = 30 * 1000)
     public void testListen() throws Exception {
@@ -510,6 +515,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
 
         assertEquals(mockAction.acceptedCount, 5);
     }
+    @SuppressWarnings("deprecation")
 
     @Test(timeOut = 30 * 1000)
     public void testTableViewWithEncryptedMessages() throws Exception {
@@ -537,6 +543,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
     }
 
     @Test(timeOut = 30 * 1000)
+    @SuppressWarnings("unchecked")
     public void testTableViewTailMessageReadRetry() throws Exception {
         String topic = "persistent://public/default/tableview-is-interrupted-test";
         admin.topics().createNonPartitionedTopic(topic);
@@ -574,6 +581,7 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     public void testBuildTableViewWithMessagesAlwaysAvailable() throws Exception {
         String topic = "persistent://public/default/testBuildTableViewWithMessagesAlwaysAvailable";
         admin.topics().createPartitionedTopic(topic, 10);

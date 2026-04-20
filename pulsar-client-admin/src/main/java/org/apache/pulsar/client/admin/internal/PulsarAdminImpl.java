@@ -19,6 +19,7 @@
 package org.apache.pulsar.client.admin.internal;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.net.URL;
 import java.util.Map;
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.WebTarget;
+import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.client.admin.Bookies;
 import org.apache.pulsar.client.admin.BrokerStats;
@@ -33,10 +35,10 @@ import org.apache.pulsar.client.admin.Brokers;
 import org.apache.pulsar.client.admin.Clusters;
 import org.apache.pulsar.client.admin.Functions;
 import org.apache.pulsar.client.admin.Lookup;
+import org.apache.pulsar.client.admin.MetadataMigration;
 import org.apache.pulsar.client.admin.Namespaces;
 import org.apache.pulsar.client.admin.NonPersistentTopics;
 import org.apache.pulsar.client.admin.Packages;
-import org.apache.pulsar.client.admin.Properties;
 import org.apache.pulsar.client.admin.ProxyStats;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.ResourceGroups;
@@ -56,6 +58,7 @@ import org.apache.pulsar.client.admin.internal.http.AsyncHttpConnectorProvider;
 import org.apache.pulsar.client.api.Authentication;
 import org.apache.pulsar.client.api.AuthenticationFactory;
 import org.apache.pulsar.client.api.PulsarClientException;
+import org.apache.pulsar.client.impl.PulsarClientSharedResourcesImpl;
 import org.apache.pulsar.client.impl.auth.AuthenticationDisabled;
 import org.apache.pulsar.client.impl.conf.ClientConfigurationData;
 import org.apache.pulsar.common.net.ServiceURI;
@@ -81,7 +84,6 @@ public class PulsarAdminImpl implements PulsarAdmin {
     private final ProxyStats proxyStats;
     private final Tenants tenants;
     private final ResourceGroups resourcegroups;
-    private final Properties properties;
     private final Namespaces namespaces;
     private final Bookies bookies;
     private final TopicsImpl topics;
@@ -91,6 +93,7 @@ public class PulsarAdminImpl implements PulsarAdmin {
     private final ResourceQuotas resourceQuotas;
     private final ClientConfigurationData clientConfigData;
     private final Client client;
+    @Getter
     private final AsyncHttpConnector asyncHttpConnector;
     private final String serviceUrl;
     private final Lookup lookups;
@@ -101,16 +104,20 @@ public class PulsarAdminImpl implements PulsarAdmin {
     private final Schemas schemas;
     private final Packages packages;
     private final Transactions transactions;
+    private final MetadataMigration metadataMigration;
     protected final WebTarget root;
     protected final Authentication auth;
+    @Getter
+    private AsyncHttpConnectorProvider asyncConnectorProvider;
 
     public PulsarAdminImpl(String serviceUrl, ClientConfigurationData clientConfigData,
                            ClassLoader clientBuilderClassLoader) throws PulsarClientException {
-        this(serviceUrl, clientConfigData, clientBuilderClassLoader, true);
+        this(serviceUrl, clientConfigData, clientBuilderClassLoader, true, null);
     }
 
     public PulsarAdminImpl(String serviceUrl, ClientConfigurationData clientConfigData,
-                           ClassLoader clientBuilderClassLoader, boolean acceptGzipCompression)
+                           ClassLoader clientBuilderClassLoader, boolean acceptGzipCompression,
+                           PulsarClientSharedResourcesImpl sharedResources)
             throws PulsarClientException {
         checkArgument(StringUtils.isNotBlank(serviceUrl), "Service URL needs to be specified");
 
@@ -124,7 +131,7 @@ public class PulsarAdminImpl implements PulsarAdmin {
             clientConfigData.setServiceUrl(serviceUrl);
         }
 
-        AsyncHttpConnectorProvider asyncConnectorProvider = new AsyncHttpConnectorProvider(clientConfigData,
+        asyncConnectorProvider = new AsyncHttpConnectorProvider(clientConfigData,
                 clientConfigData.getAutoCertRefreshSeconds(), acceptGzipCompression);
 
         ClientConfig httpConfig = new ClientConfig();
@@ -157,7 +164,7 @@ public class PulsarAdminImpl implements PulsarAdmin {
                 Math.toIntExact(clientConfigData.getConnectionTimeoutMs()),
                 Math.toIntExact(clientConfigData.getReadTimeoutMs()),
                 Math.toIntExact(clientConfigData.getRequestTimeoutMs()),
-                clientConfigData.getAutoCertRefreshSeconds());
+                clientConfigData.getAutoCertRefreshSeconds(), sharedResources);
 
         long requestTimeoutMs = clientConfigData.getRequestTimeoutMs();
         this.clusters = new ClustersImpl(root, auth, requestTimeoutMs);
@@ -166,7 +173,6 @@ public class PulsarAdminImpl implements PulsarAdmin {
         this.proxyStats = new ProxyStatsImpl(root, auth, requestTimeoutMs);
         this.tenants = new TenantsImpl(root, auth, requestTimeoutMs);
         this.resourcegroups = new ResourceGroupsImpl(root, auth, requestTimeoutMs);
-        this.properties = new TenantsImpl(root, auth, requestTimeoutMs);
         this.namespaces = new NamespacesImpl(root, auth, requestTimeoutMs);
         this.topics = new TopicsImpl(root, auth, requestTimeoutMs);
         this.localTopicPolicies = new TopicPoliciesImpl(root, auth, requestTimeoutMs, false);
@@ -182,6 +188,7 @@ public class PulsarAdminImpl implements PulsarAdmin {
         this.bookies = new BookiesImpl(root, auth, requestTimeoutMs);
         this.packages = new PackagesImpl(root, auth, asyncHttpConnector, requestTimeoutMs);
         this.transactions = new TransactionsImpl(root, auth, requestTimeoutMs);
+        this.metadataMigration = new MetadataMigrationImpl(root, auth, requestTimeoutMs);
 
         if (originalCtxLoader != null) {
             Thread.currentThread().setContextClassLoader(originalCtxLoader);
@@ -274,15 +281,6 @@ public class PulsarAdminImpl implements PulsarAdmin {
      */
     public ResourceGroups resourcegroups() {
         return resourcegroups;
-    }
-
-    /**
-     *
-     * @deprecated since 2.0. See {@link #tenants()}
-     */
-    @Deprecated
-    public Properties properties() {
-        return properties;
     }
 
     /**
@@ -427,6 +425,11 @@ public class PulsarAdminImpl implements PulsarAdmin {
         return transactions;
     }
 
+    @Override
+    public MetadataMigration metadataMigration() {
+        return metadataMigration;
+    }
+
     /**
      * Close the Pulsar admin client to release all the resources.
      */
@@ -440,5 +443,10 @@ public class PulsarAdminImpl implements PulsarAdmin {
         client.close();
 
         asyncHttpConnector.close();
+    }
+
+    @VisibleForTesting
+     WebTarget getRoot() {
+        return root;
     }
 }

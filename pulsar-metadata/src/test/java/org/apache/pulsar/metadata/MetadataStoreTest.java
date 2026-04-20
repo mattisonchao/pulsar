@@ -18,11 +18,16 @@
  */
 package org.apache.pulsar.metadata;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
+import io.oxia.client.ClientConfig;
+import io.oxia.client.api.AsyncOxiaClient;
+import io.oxia.client.session.SessionFactory;
+import io.oxia.client.session.SessionManager;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -35,16 +40,12 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
-
-import io.streamnative.oxia.client.ClientConfig;
-import io.streamnative.oxia.client.api.AsyncOxiaClient;
-import io.streamnative.oxia.client.session.SessionFactory;
-import io.streamnative.oxia.client.session.SessionManager;
 import lombok.Cleanup;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -59,6 +60,8 @@ import org.apache.pulsar.metadata.api.MetadataStoreFactory;
 import org.apache.pulsar.metadata.api.Notification;
 import org.apache.pulsar.metadata.api.NotificationType;
 import org.apache.pulsar.metadata.api.Stat;
+import org.apache.pulsar.metadata.impl.AbstractMetadataStore;
+import org.apache.pulsar.metadata.impl.DualMetadataStore;
 import org.apache.pulsar.metadata.impl.PulsarZooKeeperClient;
 import org.apache.pulsar.metadata.impl.ZKMetadataStore;
 import org.apache.pulsar.metadata.impl.oxia.OxiaMetadataStore;
@@ -68,6 +71,7 @@ import org.apache.zookeeper.ZooKeeper;
 import org.assertj.core.util.Lists;
 import org.awaitility.Awaitility;
 import org.awaitility.reflect.WhiteboxImpl;
+import org.testng.SkipException;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
@@ -112,7 +116,7 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
                 MetadataStoreConfig.builder().fsyncEnable(false).build());
 
         String data = "data";
-        String path = "/non-existing-key";
+        String path = "/concurrentPutTest";
         int concurrent = 50;
         List<CompletableFuture<Stat>> futureList = new ArrayList<>();
         for (int i = 0; i < concurrent; i++) {
@@ -415,8 +419,8 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
 
     @Test(dataProvider = "impl")
     public void testDeleteUnusedDirectories(String provider, Supplier<String> urlSupplier) throws Exception {
-        if (provider.equals("Oxia")) {
-            return;
+        if (provider.equals("Oxia") || provider.equals("MockZooKeeper")) {
+            throw new SkipException("Oxia and MockZooKeeper do not support deleteUnusedDirectories");
         }
 
         @Cleanup
@@ -432,18 +436,18 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         store.delete(prefix + "/a1/b1/c1", Optional.empty()).join();
         store.delete(prefix + "/a1/b1/c2", Optional.empty()).join();
 
-        zks.checkContainers();
+        maybeTriggerDeletingEmptyContainers(provider);
         assertFalse(store.exists(prefix + "/a1/b1").join());
 
         store.delete(prefix + "/a1/b2/c1", Optional.empty()).join();
 
-        zks.checkContainers();
+        maybeTriggerDeletingEmptyContainers(provider);
         assertFalse(store.exists(prefix + "/a1/b2").join());
 
-        zks.checkContainers();
+        maybeTriggerDeletingEmptyContainers(provider);
         assertFalse(store.exists(prefix + "/a1").join());
 
-        zks.checkContainers();
+        maybeTriggerDeletingEmptyContainers(provider);
         assertFalse(store.exists(prefix).join());
     }
 
@@ -470,9 +474,11 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         }
         MetadataStoreConfig config = builder.build();
         @Cleanup
-        ZKMetadataStore store = (ZKMetadataStore) MetadataStoreFactory.create(zks.getConnectionString(), config);
-        ZooKeeper zkClient = store.getZkClient();
+        DualMetadataStore store = (DualMetadataStore) MetadataStoreFactory.create(zks.getConnectionString(), config);
+        AbstractMetadataStore sourceStore = (AbstractMetadataStore) store.getSourceStore();
+        ZooKeeper zkClient = ((ZKMetadataStore) sourceStore).getZkClient();
         assertTrue(zkClient.getClientConfig().isSaslClientEnabled());
+        ExecutorService executor = sourceStore.getEventExecutor();
         final Runnable verify = () -> {
             String currentThreadName = Thread.currentThread().getName();
             String errorMessage = String.format("Expect to switch to thread %s, but currently it is thread %s",
@@ -480,42 +486,47 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
             assertTrue(Thread.currentThread().getName().startsWith(metadataStoreName), errorMessage);
         };
 
+        // Use thenApplyAsync to ensure the callback is scheduled on the store's executor.
+        // thenApply on an already-completed future runs synchronously on the calling thread,
+        // which would cause a false failure.
+
         // put with node which has parent(but the parent node is not exists).
-        store.put(prefix + "/a1/b1/c1", "value".getBytes(), Optional.of(-1L)).thenApply((ignore) -> {
+        store.put(prefix + "/a1/b1/c1", "value".getBytes(), Optional.of(-1L)).thenApplyAsync((ignore) -> {
             verify.run();
             return null;
-        }).join();
+        }, executor).join();
         // put.
-        store.put(prefix + "/b1", "value".getBytes(), Optional.of(-1L)).thenApply((ignore) -> {
+        store.put(prefix + "/b1", "value".getBytes(), Optional.of(-1L)).thenApplyAsync((ignore) -> {
             verify.run();
             return null;
-        }).join();
+        }, executor).join();
         // get.
-        store.get(prefix + "/b1").thenApply((ignore) -> {
+        store.get(prefix + "/b1").thenApplyAsync((ignore) -> {
             verify.run();
             return null;
-        }).join();
+        }, executor).join();
         // get the node which is not exists.
-        store.get(prefix + "/non").thenApply((ignore) -> {
+        store.get(prefix + "/non").thenApplyAsync((ignore) -> {
             verify.run();
             return null;
-        }).join();
+        }, executor).join();
         // delete.
-        store.delete(prefix + "/b1", Optional.empty()).thenApply((ignore) -> {
+        store.delete(prefix + "/b1", Optional.empty()).thenApplyAsync((ignore) -> {
             verify.run();
             return null;
-        }).join();
+        }, executor).join();
         // delete the node which is not exists.
-        store.delete(prefix + "/non", Optional.empty()).thenApply((ignore) -> {
+        store.delete(prefix + "/non", Optional.empty()).thenApplyAsync((ignore) -> {
             verify.run();
             return null;
-        }).exceptionally(ex -> {
+        }, executor).exceptionally(ex -> {
             verify.run();
             return null;
         }).join();
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     public void testZkLoadConfigFromFile() throws Exception {
         final String metadataStoreName = UUID.randomUUID().toString().replaceAll("-", "");
         MetadataStoreConfig.MetadataStoreConfigBuilder builder =
@@ -525,9 +536,9 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         builder.configFilePath("src/test/resources/zk_client_disabled_sasl.conf");
         MetadataStoreConfig config = builder.build();
         @Cleanup
-        ZKMetadataStore store = (ZKMetadataStore) MetadataStoreFactory.create(zks.getConnectionString(), config);
-
-        PulsarZooKeeperClient zkClient = (PulsarZooKeeperClient) store.getZkClient();
+        DualMetadataStore store = (DualMetadataStore) MetadataStoreFactory.create(zks.getConnectionString(), config);
+        PulsarZooKeeperClient zkClient =
+                (PulsarZooKeeperClient) ((ZKMetadataStore) store.getSourceStore()).getZkClient();
         assertFalse(zkClient.getClientConfig().isSaslClientEnabled());
 
         zkClient.process(new WatchedEvent(Watcher.Event.EventType.None, Watcher.Event.KeeperState.Expired, null));
@@ -549,6 +560,7 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         builder.configFilePath("src/test/resources/oxia_client.conf");
         MetadataStoreConfig config = builder.build();
 
+        @Cleanup
         OxiaMetadataStore store = (OxiaMetadataStore) MetadataStoreFactory.create(oxia, config);
         var client = (AsyncOxiaClient) WhiteboxImpl.getInternalState(store, "client");
         var sessionManager = (SessionManager) WhiteboxImpl.getInternalState(client, "sessionManager");
@@ -634,8 +646,8 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         CompletableFuture<Void> f2 =
                 CompletableFuture.runAsync(() -> store.put(k, new byte[0], Optional.of(-1L)).join());
         Awaitility.await().until(() -> f1.isDone() && f2.isDone());
-        assertTrue(f1.isCompletedExceptionally() && !f2.isCompletedExceptionally() ||
-                ! f1.isCompletedExceptionally() && f2.isCompletedExceptionally());
+        assertTrue(f1.isCompletedExceptionally() && !f2.isCompletedExceptionally()
+                || !f1.isCompletedExceptionally() && f2.isCompletedExceptionally());
     }
 
     @Test(dataProvider = "impl")
@@ -651,8 +663,8 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         CompletableFuture<Void> f2 =
                 CompletableFuture.runAsync(() -> store.delete(k, Optional.empty()).join());
         Awaitility.await().until(() -> f1.isDone() && f2.isDone());
-        assertTrue(f1.isCompletedExceptionally() && !f2.isCompletedExceptionally() ||
-                ! f1.isCompletedExceptionally() && f2.isCompletedExceptionally());
+        assertTrue(f1.isCompletedExceptionally() && !f2.isCompletedExceptionally()
+                || !f1.isCompletedExceptionally() && f2.isCompletedExceptionally());
     }
 
     @Test(dataProvider = "impl")
@@ -665,23 +677,16 @@ public class MetadataStoreTest extends BaseMetadataStoreTest {
         store.put("/a/a-2", "value1".getBytes(StandardCharsets.UTF_8), Optional.empty()).join();
         store.put("/b/c/b/1", "value1".getBytes(StandardCharsets.UTF_8), Optional.empty()).join();
 
-        List<String> subPaths = store.getChildren("/").get();
-        Set<String> expectedSet = "ZooKeeper".equals(provider) ? Set.of("a", "b", "zookeeper") : Set.of("a", "b");
-        for (String subPath : subPaths) {
-            assertTrue(expectedSet.contains(subPath));
-        }
+        List<String> subPaths = new ArrayList<>(store.getChildren("/").get());
+        subPaths.remove("zookeeper"); // ignored
+        subPaths.remove("pulsar"); // ignored
+        assertThat(subPaths).containsExactlyInAnyOrderElementsOf(Set.of("a", "b"));
 
         List<String> subPaths2 = store.getChildren("/a").get();
-        Set<String> expectedSet2 = Set.of("a-1", "a-2");
-        for (String subPath : subPaths2) {
-            assertTrue(expectedSet2.contains(subPath));
-        }
+        assertThat(subPaths2).containsExactlyInAnyOrderElementsOf(Set.of("a-1", "a-2"));
 
         List<String> subPaths3 = store.getChildren("/b").get();
-        Set<String> expectedSet3 = Set.of("c");
-        for (String subPath : subPaths3) {
-            assertTrue(expectedSet3.contains(subPath));
-        }
+        assertThat(subPaths3).containsExactlyInAnyOrderElementsOf(Set.of("c"));
     }
 
     @Test(dataProvider = "impl")

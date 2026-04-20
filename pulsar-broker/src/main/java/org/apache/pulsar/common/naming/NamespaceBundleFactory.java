@@ -54,10 +54,10 @@ import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.common.policies.data.BundlesData;
 import org.apache.pulsar.common.policies.data.LocalPolicies;
 import org.apache.pulsar.common.policies.data.Policies;
+import org.apache.pulsar.common.stats.CacheMetricsCollector;
 import org.apache.pulsar.common.util.Backoff;
 import org.apache.pulsar.metadata.api.Notification;
 import org.apache.pulsar.policies.data.loadbalancer.BundleData;
-import org.apache.pulsar.stats.CacheMetricsCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -138,14 +138,16 @@ public class NamespaceBundleFactory {
             future.completeExceptionally(e);
         } else {
             LOG.warn("Error loading bundle for {}. Retrying exception", namespace, e);
-            long retryDelay = backoff.next();
+            long retryDelay = backoff.next().toMillis();
             pulsar.getExecutor().schedule(() ->
                     doLoadBundles(namespace, future, backoff, retryDeadline), retryDelay, TimeUnit.MILLISECONDS);
         }
     }
 
     private static Backoff createBackoff() {
-        return new Backoff(100, TimeUnit.MILLISECONDS, 5, TimeUnit.SECONDS, 0, TimeUnit.MILLISECONDS);
+        return Backoff.builder()
+                .maxBackoff(Duration.ofSeconds(5))
+                .build();
     }
 
     private NamespaceBundles readBundles(NamespaceName namespace, LocalPolicies localPolicies, long version)

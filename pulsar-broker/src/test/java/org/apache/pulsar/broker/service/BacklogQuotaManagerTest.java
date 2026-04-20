@@ -38,7 +38,6 @@ import io.opentelemetry.sdk.testing.exporter.InMemoryMetricReader;
 import java.net.URL;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
@@ -47,7 +46,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.Cleanup;
+import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.Position;
+import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.BrokerTestUtil;
@@ -96,6 +97,7 @@ public class BacklogQuotaManagerTest {
     private static final Logger log = LoggerFactory.getLogger(BacklogQuotaManagerTest.class);
 
     public static final String CLUSTER_NAME = "usc";
+    private static final String QUOTA_CHECK_COUNT = "pulsar_storage_backlog_quota_check_duration_seconds_count";
     PulsarService pulsar;
     ServiceConfiguration config;
 
@@ -110,19 +112,19 @@ public class BacklogQuotaManagerTest {
     private static final int MAX_ENTRIES_PER_LEDGER = 5;
 
     /**
-     * see {@link MockedPulsarServiceBaseTest#deleteNamespaceWithRetry(String, boolean, PulsarAdmin, Collection)}
+     * see {@link MockedPulsarServiceBaseTest#deleteNamespaceWithRetry(String, boolean, PulsarAdmin)}.
      */
     protected void deleteNamespaceWithRetry(String ns, boolean force)
             throws Exception {
-        MockedPulsarServiceBaseTest.deleteNamespaceWithRetry(ns, force, admin, pulsar);
+        MockedPulsarServiceBaseTest.deleteNamespaceWithRetry(ns, force, admin);
     }
 
     /**
-     * see {@link MockedPulsarServiceBaseTest#deleteNamespaceWithRetry(String, boolean, PulsarAdmin, Collection)}
+     * see {@link MockedPulsarServiceBaseTest#deleteNamespaceWithRetry(String, boolean, PulsarAdmin)}.
      */
     protected void deleteNamespaceWithRetry(String ns, boolean force, PulsarAdmin admin)
             throws Exception {
-        MockedPulsarServiceBaseTest.deleteNamespaceWithRetry(ns, force, admin, pulsar);
+        MockedPulsarServiceBaseTest.deleteNamespaceWithRetry(ns, force, admin);
     }
 
     @DataProvider(name = "backlogQuotaSizeGB")
@@ -151,6 +153,7 @@ public class BacklogQuotaManagerTest {
             config.setBacklogQuotaCheckIntervalInSeconds(TIME_TO_CHECK_BACKLOG_QUOTA);
             config.setManagedLedgerMaxEntriesPerLedger(MAX_ENTRIES_PER_LEDGER);
             config.setManagedLedgerMinLedgerRolloverTimeMinutes(0);
+            config.setManagedLedgerDefaultMarkDeleteRateLimit(1000);
             config.setAllowAutoTopicCreationType(TopicType.NON_PARTITIONED);
             config.setSystemTopicEnabled(true);
             config.setTopicLevelPoliciesEnabled(true);
@@ -199,11 +202,11 @@ public class BacklogQuotaManagerTest {
     void createNamespaces() throws PulsarAdminException {
         config.setPreciseTimeBasedBacklogQuotaCheck(false);
         admin.namespaces().createNamespace("prop/ns-quota");
-        admin.namespaces().setNamespaceReplicationClusters("prop/ns-quota", Sets.newHashSet("usc"));
+        admin.namespaces().setNamespaceReplicationClusters("prop/ns-quota", Sets.newHashSet("usc"), false);
         admin.namespaces().createNamespace("prop/quotahold");
-        admin.namespaces().setNamespaceReplicationClusters("prop/quotahold", Sets.newHashSet("usc"));
+        admin.namespaces().setNamespaceReplicationClusters("prop/quotahold", Sets.newHashSet("usc"), false);
         admin.namespaces().createNamespace("prop/quotaholdasync");
-        admin.namespaces().setNamespaceReplicationClusters("prop/quotaholdasync", Sets.newHashSet("usc"));
+        admin.namespaces().setNamespaceReplicationClusters("prop/quotaholdasync", Sets.newHashSet("usc"), false);
     }
 
     @AfterMethod(alwaysRun = true)
@@ -218,8 +221,9 @@ public class BacklogQuotaManagerTest {
     }
 
     /**
-     * Readers should not affect backlog quota
+     * Readers should not affect backlog quota.
      */
+    @SuppressWarnings("deprecation")
     @Test
     public void testBacklogQuotaWithReader() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -230,11 +234,13 @@ public class BacklogQuotaManagerTest {
                         .limitTime(TIME_TO_CHECK_BACKLOG_QUOTA)
                         .retentionPolicy(BacklogQuota.RetentionPolicy.producer_exception)
                         .build());
-        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString()).statsInterval(0, SECONDS).build()) {
+        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString())
+                .statsInterval(0, SECONDS).build()) {
             final String topic1 = "persistent://prop/ns-quota/topic1" + UUID.randomUUID();
             final int numMsgs = 20;
 
-            Reader<byte[]> reader = client.newReader().topic(topic1).receiverQueueSize(1).startMessageId(MessageId.latest).create();
+            Reader<byte[]> reader = client.newReader().topic(topic1).receiverQueueSize(1)
+                    .startMessageId(MessageId.latest).create();
 
             Producer<byte[]> producer = createProducer(client, topic1);
 
@@ -305,6 +311,7 @@ public class BacklogQuotaManagerTest {
                 admin.topics().getStats(topic1, GetStatsOptions.builder().getPreciseBacklog(getPreciseBacklog).build());
         return stats;
     }
+    @SuppressWarnings("deprecation")
 
     @Test
     public void testTriggerBacklogQuotaSizeWithReader() throws Exception {
@@ -316,10 +323,12 @@ public class BacklogQuotaManagerTest {
                         .limitTime(TIME_TO_CHECK_BACKLOG_QUOTA)
                         .retentionPolicy(BacklogQuota.RetentionPolicy.producer_exception)
                         .build());
-        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString()).statsInterval(0, SECONDS).build();) {
+        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString())
+                .statsInterval(0, SECONDS).build();) {
             final String topic1 = "persistent://prop/ns-quota/topic1" + UUID.randomUUID();
             final int numMsgs = 20;
-            Reader<byte[]> reader = client.newReader().topic(topic1).receiverQueueSize(1).startMessageId(MessageId.latest).create();
+            Reader<byte[]> reader = client.newReader().topic(topic1).receiverQueueSize(1)
+                    .startMessageId(MessageId.latest).create();
 
             Producer<byte[]> producer = createProducer(client, topic1);
             byte[] content = new byte[1024];
@@ -373,6 +382,7 @@ public class BacklogQuotaManagerTest {
             reader.close();
         }
     }
+    @SuppressWarnings("deprecation")
 
     @Test
     public void backlogsStatsPrecise() throws PulsarAdminException, PulsarClientException, InterruptedException {
@@ -427,10 +437,11 @@ public class BacklogQuotaManagerTest {
             Message<byte[]> oldestMessage = consumer1.receive();
             consumer1.acknowledge(oldestMessage);
 
-            log.info("Subscription 1 moved 1 message. Now subscription 2 is the oldest. Oldest message:"+
-                    oldestMessage.getMessageId());
+            log.info("Subscription 1 moved 1 message. Now subscription 2 is the oldest. Oldest message:"
+                    + oldestMessage.getMessageId());
 
-            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
             waitForQuotaCheckToRunTwice();
 
             Metrics metrics = prometheusMetricsClient.getMetrics();
@@ -438,7 +449,8 @@ public class BacklogQuotaManagerTest {
 
             assertThat(topicStats.getBacklogQuotaLimitSize()).isEqualTo(sizeLimitBytes);
             assertThat(topicStats.getBacklogQuotaLimitTime()).isEqualTo(timeLimitSeconds);
-            long expectedMessageAgeSeconds = MILLISECONDS.toSeconds(System.currentTimeMillis() - oldestMessage.getPublishTime());
+            long expectedMessageAgeSeconds =
+                    MILLISECONDS.toSeconds(System.currentTimeMillis() - oldestMessage.getPublishTime());
             assertThat(topicStats.getOldestBacklogMessageAgeSeconds())
                     .isCloseTo(expectedMessageAgeSeconds, within(1L));
             assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isEqualTo(subName2);
@@ -467,7 +479,8 @@ public class BacklogQuotaManagerTest {
 
             log.info("Subscription 1 moved to be the oldest");
 
-            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
             waitForQuotaCheckToRunTwice();
 
             metrics = prometheusMetricsClient.getMetrics();
@@ -475,7 +488,8 @@ public class BacklogQuotaManagerTest {
                     "pulsar_storage_backlog_age_seconds", "topic", topic1)
                     .get(0).value;
 
-            expectedMessageAgeSeconds = MILLISECONDS.toSeconds(System.currentTimeMillis() - oldestMessage.getPublishTime());
+            expectedMessageAgeSeconds =
+                    MILLISECONDS.toSeconds(System.currentTimeMillis() - oldestMessage.getPublishTime());
             assertThat(actualAge).isCloseTo(expectedMessageAgeSeconds, within(2L));
 
             topicStats = getTopicStats(topic1);
@@ -491,7 +505,8 @@ public class BacklogQuotaManagerTest {
             }
 
             log.info("Subscription 1 moved 3 messages. Now subscription 2 is the oldest");
-            waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
             waitForQuotaCheckToRunTwice();
 
             // Cache shouldn't be used, since position has changed
@@ -499,7 +514,8 @@ public class BacklogQuotaManagerTest {
             assertThat(readEntries).isGreaterThan(entriesReadBefore);
 
             topicStats = getTopicStats(topic1);
-            expectedMessageAgeSeconds = MILLISECONDS.toSeconds(System.currentTimeMillis() - secondOldestMessage.getPublishTime());
+            expectedMessageAgeSeconds =
+                    MILLISECONDS.toSeconds(System.currentTimeMillis() - secondOldestMessage.getPublishTime());
             assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isCloseTo(expectedMessageAgeSeconds, within(2L));
             assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isEqualTo(subName2);
 
@@ -526,7 +542,7 @@ public class BacklogQuotaManagerTest {
             assertThat(topicStats.getBacklogSize()).isEqualTo(0);
             assertThat(topicStats.getSubscriptions().get(subName1).getMsgBacklog()).isEqualTo(0);
             assertThat(topicStats.getSubscriptions().get(subName2).getMsgBacklog()).isEqualTo(0);
-            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(0);
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(-1);
             assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isNull();
 
             metrics = prometheusMetricsClient.getMetrics();
@@ -537,16 +553,18 @@ public class BacklogQuotaManagerTest {
                     entry("cluster", CLUSTER_NAME),
                     entry("namespace", namespace),
                     entry("topic", topic1));
-            assertThat((long) backlogAgeMetric.value).isEqualTo(0);
+            assertThat((long) backlogAgeMetric.value).isEqualTo(-1);
 
             // producer should create success.
             Producer<byte[]> producer2 = createProducer(client, topic1);
             assertNotNull(producer2);
         }
     }
+    @SuppressWarnings("deprecation")
 
     @Test
-    public void backlogsStatsPreciseWithNoBacklog() throws PulsarAdminException, PulsarClientException, InterruptedException {
+    public void backlogsStatsPreciseWithNoBacklog() throws PulsarAdminException,
+            PulsarClientException, InterruptedException {
         config.setPreciseTimeBasedBacklogQuotaCheck(true);
         config.setExposePreciseBacklogInPrometheus(true);
         final String namespace = "prop/ns-quota";
@@ -589,7 +607,8 @@ public class BacklogQuotaManagerTest {
             }
 
             // This code will wait about 4~5 Seconds, to make sure the oldest message is 4~5 seconds old
-            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
             waitForQuotaCheckToRunTwice();
 
             Metrics metrics = prometheusMetricsClient.getMetrics();
@@ -598,7 +617,7 @@ public class BacklogQuotaManagerTest {
             assertThat(topicStats.getBacklogQuotaLimitTime()).isEqualTo(timeLimitSeconds);
             assertThat(topicStats.getBacklogSize()).isEqualTo(0);
             assertThat(topicStats.getSubscriptions().get(subName1).getMsgBacklog()).isEqualTo(0);
-            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(0);
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(-1);
             assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isNull();
 
             Metric backlogAgeMetric =
@@ -608,7 +627,7 @@ public class BacklogQuotaManagerTest {
                     entry("cluster", CLUSTER_NAME),
                     entry("namespace", namespace),
                     entry("topic", topic1));
-            assertThat((long) backlogAgeMetric.value).isEqualTo(0);
+            assertThat((long) backlogAgeMetric.value).isEqualTo(-1);
 
             // producer should create success.
             Producer<byte[]> producer2 = createProducer(client, topic1);
@@ -617,11 +636,154 @@ public class BacklogQuotaManagerTest {
         config.setPreciseTimeBasedBacklogQuotaCheck(false);
         config.setExposePreciseBacklogInPrometheus(false);
     }
+    @SuppressWarnings("deprecation")
+
+    @Test
+    public void backlogsAgeMetricsPreciseWithoutBacklogQuota() throws Exception {
+        config.setPreciseTimeBasedBacklogQuotaCheck(true);
+        final String namespace = "prop/ns-quota";
+        assertEquals(admin.namespaces().getBacklogQuotaMap(namespace), new HashMap<>());
+
+        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString())
+                .statsInterval(0, SECONDS).build()) {
+            final String topic1 = "persistent://prop/ns-quota/topic2" + UUID.randomUUID();
+
+            final String subName1 = "c1";
+            final String subName2 = "c2";
+            final int numMsgs = 4;
+
+            Consumer<byte[]> consumer1 = client.newConsumer().topic(topic1).subscriptionName(subName1)
+                    .acknowledgmentGroupTime(0, SECONDS)
+                    .subscribe();
+            Consumer<byte[]> consumer2 = client.newConsumer().topic(topic1).subscriptionName(subName2)
+                    .acknowledgmentGroupTime(0, SECONDS)
+                    .subscribe();
+            Producer<byte[]> producer = createProducer(client, topic1);
+
+            byte[] content = new byte[1024];
+            for (int i = 0; i < numMsgs; i++) {
+                Thread.sleep(3000); // Guarantees if we use wrong message in age, to show up in failed test
+                producer.send(content);
+            }
+
+            String c1MarkDeletePositionBefore =
+                    admin.topics().getInternalStats(topic1).cursors.get(subName1).markDeletePosition;
+
+            // Move subscription 1, one message, such that subscription 2 is the oldest
+            //  S2  S1
+            //  0   1
+            Message<byte[]> oldestMessage = consumer1.receive();
+            consumer1.acknowledge(oldestMessage);
+            log.info("Subscription 1 moved 1 message. Now subscription 2 is the oldest. Oldest message:"
+                    + oldestMessage.getMessageId());
+
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
+            waitForQuotaCheckToRunTwice();
+
+            Metrics metrics = prometheusMetricsClient.getMetrics();
+            TopicStats topicStats = getTopicStats(topic1);
+
+            long expectedMessageAgeSeconds =
+                    MILLISECONDS.toSeconds(System.currentTimeMillis() - oldestMessage.getPublishTime());
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds())
+                    .isCloseTo(expectedMessageAgeSeconds, within(1L));
+
+            Metric backlogAgeMetric =
+                    metrics.findSingleMetricByNameAndLabels("pulsar_storage_backlog_age_seconds",
+                            Pair.of("topic", topic1));
+            assertThat(backlogAgeMetric.tags).containsExactly(
+                    entry("cluster", CLUSTER_NAME),
+                    entry("namespace", namespace),
+                    entry("topic", topic1));
+            assertThat((long) backlogAgeMetric.value).isCloseTo(expectedMessageAgeSeconds, within(2L));
+        }
+        config.setPreciseTimeBasedBacklogQuotaCheck(false);
+    }
+    @SuppressWarnings("deprecation")
+
+    @Test
+    public void backlogsAgeMetricsNoPreciseWithoutBacklogQuota() throws Exception {
+        config.setPreciseTimeBasedBacklogQuotaCheck(false);
+        final String namespace = "prop/ns-quota";
+        assertEquals(admin.namespaces().getBacklogQuotaMap(namespace), new HashMap<>());
+
+        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString())
+                .statsInterval(0, SECONDS).build()) {
+            final String topic1 = "persistent://prop/ns-quota/topic2" + UUID.randomUUID();
+
+            final String subName1 = "c1";
+            final int numMsgs = 7;
+
+            Consumer<byte[]> consumer1 = client.newConsumer().topic(topic1).subscriptionName(subName1)
+                    .acknowledgmentGroupTime(0, SECONDS)
+                    .subscribe();
+            Producer<byte[]> producer = createProducer(client, topic1);
+
+            byte[] content = new byte[1024];
+            // 1. Send messages
+            // The manager ledger max entries is 5, so we can send 7 messages to make sure we have multiple ledgers
+            // When send msg 4, the ledger closed.
+            // Second:     1  2  3  4  5     6   7
+            // msg idx:   [0  1  2  3  4]   [5   6]
+            for (int i = 0; i < numMsgs; i++) {
+                Thread.sleep(1000);
+                MessageId send = producer.send(content);
+            }
+            long lastLedgerCloseTime = System.currentTimeMillis() - 2000;
+
+            // 2. Receive msg-0 and ack it.
+            String c1MarkDeletePositionBefore =
+                    admin.topics().getInternalStats(topic1).cursors.get(subName1).markDeletePosition;
+            Message<byte[]> oldestMessage = consumer1.receive();
+            consumer1.acknowledge(oldestMessage);
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
+            log.info("Moved subscription 1, by 1 message {}", oldestMessage.getMessageId());
+
+            // 3. Expected the oldestBacklogMessageAgeSeconds is based on last ledger close time
+            long expectedMessageAgeSeconds =
+                    MILLISECONDS.toSeconds(System.currentTimeMillis() - lastLedgerCloseTime);
+            PersistentTopic topicRef = (PersistentTopic) pulsar.getBrokerService().getTopicReference(topic1).get();
+            topicRef.updateOldPositionInfo();
+            TopicStats topicStats = getTopicStats(topic1);
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds())
+                    .isCloseTo(expectedMessageAgeSeconds, within(1L));
+            Metrics metrics = prometheusMetricsClient.getMetrics();
+            Metric backlogAgeMetric =
+                    metrics.findSingleMetricByNameAndLabels("pulsar_storage_backlog_age_seconds",
+                            Pair.of("topic", topic1));
+            assertThat(backlogAgeMetric.tags).containsExactly(
+                    entry("cluster", CLUSTER_NAME),
+                    entry("namespace", namespace),
+                    entry("topic", topic1));
+            assertThat((long) backlogAgeMetric.value).isCloseTo(expectedMessageAgeSeconds, within(2L));
+
+            // 4. Move consumer to `end - 1`, then OldestBacklogMessageAgeSeconds should be `-1`, because the
+            // second ledger is not closed yet.
+            for (int i = 1; i < numMsgs - 1; i++) {
+                Message<byte[]> msg = consumer1.receive();
+                consumer1.acknowledge(msg);
+            }
+            waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            ManagedCursorContainer cursors = (ManagedCursorContainer) topicRef.getManagedLedger().getCursors();
+            ManagedCursor subCursor = cursors.get(subName1);
+            Awaitility.await().pollInterval(100, MILLISECONDS).atMost(5, SECONDS).until(
+                    () -> subCursor.getMarkDeletedPosition().equals(subCursor.getPersistentMarkDeletedPosition()));
+            topicRef.updateOldPositionInfo();
+            topicStats = getTopicStats(topic1, true);
+            assertThat(topicStats.getSubscriptions().get(subName1).getMsgBacklog())
+                    .isEqualTo(1L);
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds())
+                    .isEqualTo(-1L);
+        }
+    }
 
     private long getReadEntries(String topic1) {
         return ((PersistentTopic) pulsar.getBrokerService().getTopicReference(topic1).get())
                 .getManagedLedger().getStats().getEntriesReadTotalCount();
     }
+    @SuppressWarnings("deprecation")
 
     @Test
     public void backlogsStatsNotPrecise() throws PulsarAdminException, PulsarClientException, InterruptedException {
@@ -675,7 +837,8 @@ public class BacklogQuotaManagerTest {
 
             consumer1.acknowledge(consumer1.receive());
             log.info("Moved subscription 1, by 1 message");
-            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
             waitForQuotaCheckToRunTwice();
 
             TopicStats topicStats = getTopicStats(topic1);
@@ -703,7 +866,7 @@ public class BacklogQuotaManagerTest {
             String c2MarkDeletePositionBefore =
                     admin.topics().getInternalStats(topic1).cursors.get(subName2).markDeletePosition;
             Message<byte[]> message;
-            for (int i = 0; i < numMsgs-1; i++) {
+            for (int i = 0; i < numMsgs - 1; i++) {
                 consumer1.acknowledge(consumer1.receive());
                 message = consumer2.receive();
                 consumer2.acknowledge(message);
@@ -718,12 +881,23 @@ public class BacklogQuotaManagerTest {
             assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isEqualTo(subName2);
             expectedAge = MILLISECONDS.toSeconds(System.currentTimeMillis() - unloadTime);
             assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isCloseTo(expectedAge, within(1L));
+
+            // Unsubscribe consume1 and consumer2
+            consumer1.unsubscribe();
+            consumer2.unsubscribe();
+            waitForQuotaCheckToRunTwice();
+            topicStats = getTopicStats(topic1);
+            assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isNull();
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(-1);
+
             config.setManagedLedgerMaxEntriesPerLedger(MAX_ENTRIES_PER_LEDGER);
         }
     }
+    @SuppressWarnings("deprecation")
 
     @Test
-    public void backlogsStatsNotPreciseWithNoBacklog() throws PulsarAdminException, PulsarClientException, InterruptedException {
+    public void backlogsStatsNotPreciseWithNoBacklog() throws PulsarAdminException,
+            PulsarClientException, InterruptedException {
         config.setPreciseTimeBasedBacklogQuotaCheck(false);
         config.setExposePreciseBacklogInPrometheus(false);
         config.setManagedLedgerMaxEntriesPerLedger(6);
@@ -765,7 +939,8 @@ public class BacklogQuotaManagerTest {
                 consumer1.acknowledge(consumer1.receive());
             }
 
-            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1, c1MarkDeletePositionBefore);
+            c1MarkDeletePositionBefore = waitForMarkDeletePositionToChange(topic1, subName1,
+                    c1MarkDeletePositionBefore);
             waitForQuotaCheckToRunTwice();
 
             // backlog and backlogAceSeconds should be 0
@@ -773,11 +948,11 @@ public class BacklogQuotaManagerTest {
             Metrics metrics = prometheusMetricsClient.getMetrics();
             assertEquals(topicStats.getSubscriptions().get(subName1).getMsgBacklog(), 0);
             assertThat(topicStats.getOldestBacklogMessageSubscriptionName()).isNull();
-            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(0);
+            assertThat(topicStats.getOldestBacklogMessageAgeSeconds()).isEqualTo(-1);
             Metric backlogAgeMetric =
                     metrics.findSingleMetricByNameAndLabels("pulsar_storage_backlog_age_seconds",
                             Pair.of("topic", topic1));
-            assertThat(backlogAgeMetric.value).isEqualTo(0);
+            assertThat(backlogAgeMetric.value).isEqualTo(-1);
 
             // producer should create success.
             Producer<byte[]> producer2 = createProducer(client, topic1);
@@ -787,6 +962,7 @@ public class BacklogQuotaManagerTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private void unloadAndLoadTopic(String topic, Producer producer) throws PulsarAdminException,
             PulsarClientException {
         admin.topics().unload(topic);
@@ -797,11 +973,31 @@ public class BacklogQuotaManagerTest {
     }
 
     private void waitForQuotaCheckToRunTwice() {
-        final long initialQuotaCheckCount = getQuotaCheckCount();
+        final long[] baselineCount = new long[1];
+        final boolean[] baselineCaptured = new boolean[1];
+
         Awaitility.await()
                 .pollInterval(1, SECONDS)
-                .atMost(TIME_TO_CHECK_BACKLOG_QUOTA*3, SECONDS)
-                .until(() -> getQuotaCheckCount() > initialQuotaCheckCount + 1);
+                .atMost(TIME_TO_CHECK_BACKLOG_QUOTA * 3, SECONDS)
+                .until(() -> {
+                    final java.util.OptionalLong countOpt = getQuotaCheckCount();
+
+                    // If /metrics is not returning the metric yet, keep waiting.
+                    // Don't take the baseline until a successful scrape shows the metric.
+                    if (countOpt.isEmpty()) {
+                        return false;
+                    }
+
+                    // First successful scrape: capture baseline, then ask for two more checks.
+                    final long observedCount = countOpt.getAsLong();
+                    if (!baselineCaptured[0]) {
+                        baselineCount[0] = observedCount;
+                        baselineCaptured[0] = true;
+                        return false;
+                    }
+
+                    return observedCount > baselineCount[0] + 1;
+                });
     }
 
     /**
@@ -815,12 +1011,20 @@ public class BacklogQuotaManagerTest {
             markDeletePosition -> markDeletePosition != null && !markDeletePosition.equals(previousMarkDeletePosition));
     }
 
-    private long getQuotaCheckCount() {
-        Metrics metrics = prometheusMetricsClient.getMetrics();
-        return (long) metrics.findByNameAndLabels(
-                        "pulsar_storage_backlog_quota_check_duration_seconds_count",
-                        "cluster", CLUSTER_NAME)
-                .get(0).value;
+    private java.util.OptionalLong getQuotaCheckCount() {
+        try {
+            final Metrics metrics = prometheusMetricsClient.getMetrics();
+            final java.util.List<Metric> matches =
+                    metrics.findByNameAndLabels(QUOTA_CHECK_COUNT, "cluster", CLUSTER_NAME);
+            if (matches.isEmpty()) {
+                // No metric sample for this name and labels in this scrape.
+                return java.util.OptionalLong.empty();
+            }
+            return java.util.OptionalLong.of((long) matches.get(0).value);
+        } catch (Exception e) {
+            // Scrape failed or the metrics client threw, treat as not available now.
+            return java.util.OptionalLong.empty();
+        }
     }
 
     /**
@@ -828,6 +1032,7 @@ public class BacklogQuotaManagerTest {
      * and can't do message age check against the quota.
      * @throws Exception
      */
+    @SuppressWarnings("deprecation")
     @Test
     public void testTriggerBacklogTimeQuotaWithReader() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -838,10 +1043,12 @@ public class BacklogQuotaManagerTest {
                         .limitTime(TIME_TO_CHECK_BACKLOG_QUOTA)
                         .retentionPolicy(BacklogQuota.RetentionPolicy.producer_exception)
                         .build());
-        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString()).statsInterval(0, SECONDS).build();) {
+        try (PulsarClient client = PulsarClient.builder().serviceUrl(adminUrl.toString())
+                .statsInterval(0, SECONDS).build();) {
             final String topic1 = "persistent://prop/ns-quota/topic2" + UUID.randomUUID();
             final int numMsgs = 9;
-            Reader<byte[]> reader = client.newReader().topic(topic1).receiverQueueSize(1).startMessageId(MessageId.latest).create();
+            Reader<byte[]> reader = client.newReader().topic(topic1).receiverQueueSize(1)
+                    .startMessageId(MessageId.latest).create();
             Producer<byte[]> producer = createProducer(client, topic1);
             byte[] content = new byte[1024];
             for (int i = 0; i < numMsgs; i++) {
@@ -895,6 +1102,7 @@ public class BacklogQuotaManagerTest {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testConsumerBacklogEvictionSizeQuota() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -948,6 +1156,7 @@ public class BacklogQuotaManagerTest {
                 1);
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testConsumerBacklogEvictionTimeQuotaPrecise() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1014,6 +1223,7 @@ public class BacklogQuotaManagerTest {
     }
 
 
+    @SuppressWarnings("deprecation")
     @Test(timeOut = 60000)
     public void testConsumerBacklogEvictionTimeQuota() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1083,6 +1293,7 @@ public class BacklogQuotaManagerTest {
                 value -> assertThat(value).isGreaterThanOrEqualTo(delaySeconds));
     }
 
+    @SuppressWarnings("deprecation")
     @Test(timeOut = 60000)
     public void testConsumerBacklogEvictionTimeQuotaWithPartEviction() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1137,6 +1348,7 @@ public class BacklogQuotaManagerTest {
     }
 
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testConsumerBacklogEvictionTimeQuotaWithEmptyLedger() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1352,6 +1564,7 @@ public class BacklogQuotaManagerTest {
                 });
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testConcurrentAckAndEviction() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1423,6 +1636,7 @@ public class BacklogQuotaManagerTest {
         assertTrue(stats.getBacklogSize() <= 10 * 1024, "Storage size is [" + stats.getStorageSize() + "]");
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testNoEviction() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1487,6 +1701,7 @@ public class BacklogQuotaManagerTest {
         assertFalse(gotException.get());
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testEvictionMulti() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/ns-quota"),
@@ -1589,6 +1804,7 @@ public class BacklogQuotaManagerTest {
         assertTrue(stats.getBacklogSize() <= 15 * 1024, "Storage size is [" + stats.getStorageSize() + "]");
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testAheadProducerOnHold() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/quotahold"),
@@ -1631,6 +1847,7 @@ public class BacklogQuotaManagerTest {
                 "Number of producers on topic " + topic1 + " are [" + stats.getPublishers().size() + "]");
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testAheadProducerOnHoldTimeout() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/quotahold"),
@@ -1669,6 +1886,7 @@ public class BacklogQuotaManagerTest {
         assertTrue(gotException, "timeout did not occur");
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testProducerException() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/quotahold"),
@@ -1714,6 +1932,7 @@ public class BacklogQuotaManagerTest {
         return new Object[][] { { Boolean.TRUE }, { Boolean.FALSE } };
     }
 
+    @SuppressWarnings("deprecation")
     @Test(dataProvider = "dedupTestSet")
     public void testProducerExceptionAndThenUnblockSizeQuota(boolean dedupTestSet) throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/quotahold"),
@@ -1801,6 +2020,7 @@ public class BacklogQuotaManagerTest {
 
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testProducerExceptionAndThenUnblockTimeQuotaPrecise() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/quotahold"),
@@ -1867,6 +2087,7 @@ public class BacklogQuotaManagerTest {
         assertFalse(gotException, "unable to publish due to " + sendException);
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testProducerExceptionAndThenUnblockTimeQuota() throws Exception {
         assertEquals(admin.namespaces().getBacklogQuotaMap("prop/quotahold"),
@@ -1932,6 +2153,7 @@ public class BacklogQuotaManagerTest {
         assertFalse(gotException, "unable to publish due to " + sendException);
     }
 
+    @SuppressWarnings("deprecation")
     @Test(dataProvider = "backlogQuotaSizeGB", priority = 1)
     public void testBacklogQuotaInGB(boolean backlogQuotaSizeGB) throws Exception {
 

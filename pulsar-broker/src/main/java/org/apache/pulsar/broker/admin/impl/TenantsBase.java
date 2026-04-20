@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar.broker.admin.impl;
 
-import static org.apache.pulsar.common.naming.Constants.GLOBAL_CLUSTER;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import io.swagger.annotations.ApiResponse;
@@ -48,6 +47,7 @@ import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.common.naming.NamedEntity;
 import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.apache.pulsar.common.policies.data.TenantInfoImpl;
+import org.apache.pulsar.common.policies.data.TenantOperation;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,7 +62,7 @@ public class TenantsBase extends PulsarWebResource {
             @ApiResponse(code = 404, message = "Tenant doesn't exist")})
     public void getTenants(@Suspended final AsyncResponse asyncResponse) {
         final String clientAppId = clientAppId();
-        validateSuperUserAccessAsync()
+        validateBothSuperUserAndTenantOperation(null, TenantOperation.LIST_TENANTS)
                 .thenCompose(__ -> tenantResources().listTenantsAsync())
                 .thenAccept(tenants -> {
                     // deep copy the tenants to avoid concurrent sort exception
@@ -84,7 +84,7 @@ public class TenantsBase extends PulsarWebResource {
     public void getTenantAdmin(@Suspended final AsyncResponse asyncResponse,
             @ApiParam(value = "The tenant name") @PathParam("tenant") String tenant) {
         final String clientAppId = clientAppId();
-        validateSuperUserAccessAsync()
+        validateBothSuperUserAndTenantOperation(tenant, TenantOperation.GET_TENANT)
                 .thenCompose(__ -> tenantResources().getTenantAsync(tenant))
                 .thenApply(tenantInfo -> {
                     if (!tenantInfo.isPresent()) {
@@ -121,7 +121,7 @@ public class TenantsBase extends PulsarWebResource {
             asyncResponse.resume(new RestException(Status.PRECONDITION_FAILED, "Tenant name is not valid"));
             return;
         }
-        validateSuperUserAccessAsync()
+        validateBothSuperUserAndTenantOperation(tenant, TenantOperation.CREATE_TENANT)
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
                 .thenCompose(__ -> validateClustersAsync(tenantInfo))
                 .thenCompose(__ -> validateAdminRoleAsync(tenantInfo))
@@ -169,7 +169,7 @@ public class TenantsBase extends PulsarWebResource {
             @ApiParam(value = "The tenant name") @PathParam("tenant") String tenant,
             @ApiParam(value = "TenantInfo") TenantInfoImpl newTenantAdmin) {
         final String clientAppId = clientAppId();
-        validateSuperUserAccessAsync()
+        validateBothSuperUserAndTenantOperation(tenant, TenantOperation.UPDATE_TENANT)
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
                 .thenCompose(__ -> validateClustersAsync(newTenantAdmin))
                 .thenCompose(__ -> validateAdminRoleAsync(newTenantAdmin))
@@ -206,7 +206,7 @@ public class TenantsBase extends PulsarWebResource {
             @PathParam("tenant") @ApiParam(value = "The tenant name") String tenant,
             @QueryParam("force") @DefaultValue("false") boolean force) {
         final String clientAppId = clientAppId();
-        validateSuperUserAccessAsync()
+        validateBothSuperUserAndTenantOperation(tenant, TenantOperation.DELETE_TENANT)
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
                 .thenCompose(__ -> internalDeleteTenant(tenant, force))
                 .thenAccept(__ -> {
@@ -272,17 +272,27 @@ public class TenantsBase extends PulsarWebResource {
     }
 
     private CompletableFuture<Void> validateClustersAsync(TenantInfo info) {
-        // empty cluster shouldn't be allowed
-        if (info == null || info.getAllowedClusters().stream().filter(c -> !StringUtils.isBlank(c))
-                .collect(Collectors.toSet()).isEmpty()
-                || info.getAllowedClusters().stream().anyMatch(ac -> StringUtils.isBlank(ac))) {
-            log.warn("[{}] Failed to validate due to clusters are empty", clientAppId());
-            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED, "Clusters can not be empty"));
+        if (info == null) {
+            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED, "TenantInfo is null"));
         }
+
+        Set<String> allowedClusters = info.getAllowedClusters();
+        if (allowedClusters == null) {
+            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED, "Clusters cannot be null"));
+        }
+
+        Set<String> cleanedClusters = allowedClusters.stream()
+                .filter(c -> !StringUtils.isBlank(c))
+                .collect(Collectors.toSet());
+        if (cleanedClusters.isEmpty() || allowedClusters.stream().anyMatch(StringUtils::isBlank)) {
+            log.warn("[{}] Validation failed: allowed clusters are empty or contain blanks", clientAppId());
+            return FutureUtil.failedFuture(
+                    new RestException(Status.PRECONDITION_FAILED, "Clusters cannot be empty or blank"));
+        }
+
         return clusterResources().listAsync().thenAccept(availableClusters -> {
-            Set<String> allowedClusters = info.getAllowedClusters();
             List<String> nonexistentClusters = allowedClusters.stream()
-                    .filter(cluster -> !(availableClusters.contains(cluster) || GLOBAL_CLUSTER.equals(cluster)))
+                    .filter(cluster -> !availableClusters.contains(cluster))
                     .collect(Collectors.toList());
             if (nonexistentClusters.size() > 0) {
                 log.warn("[{}] Failed to validate due to clusters {} do not exist", clientAppId(), nonexistentClusters);
@@ -303,5 +313,42 @@ public class TenantsBase extends PulsarWebResource {
             }
         }
         return CompletableFuture.completedFuture(null);
+    }
+
+    private CompletableFuture<Boolean> validateBothSuperUserAndTenantOperation(String tenant,
+                                                                               TenantOperation operation) {
+        final var superUserValidationFuture = validateSuperUserAccessAsync();
+        final var tenantOperationValidationFuture = validateTenantOperationAsync(tenant, operation);
+        return CompletableFuture.allOf(superUserValidationFuture, tenantOperationValidationFuture)
+                .handle((__, err) -> {
+                    if (!superUserValidationFuture.isCompletedExceptionally()
+                        || !tenantOperationValidationFuture.isCompletedExceptionally()) {
+                        return true;
+                    }
+                    if (log.isDebugEnabled()) {
+                        Throwable superUserValidationException = null;
+                        try {
+                            superUserValidationFuture.join();
+                        } catch (Throwable ex) {
+                            superUserValidationException = FutureUtil.unwrapCompletionException(ex);
+                        }
+                        Throwable brokerOperationValidationException = null;
+                        try {
+                            tenantOperationValidationFuture.join();
+                        } catch (Throwable ex) {
+                            brokerOperationValidationException = FutureUtil.unwrapCompletionException(ex);
+                        }
+                        log.debug("validateBothTenantOperationAndSuperUser failed."
+                                  + " originalPrincipal={} clientAppId={} operation={} "
+                                  + "superuserValidationError={} tenantOperationValidationError={}",
+                                originalPrincipal(), clientAppId(), operation.toString(),
+                                superUserValidationException, brokerOperationValidationException);
+                    }
+                    throw new RestException(Status.UNAUTHORIZED,
+                            String.format("Unauthorized to validateBothTenantOperationAndSuperUser for"
+                                          + " originalPrincipal [%s] and clientAppId [%s] "
+                                          + "about operation [%s] ",
+                                    originalPrincipal(), clientAppId(), operation.toString()));
+                });
     }
 }

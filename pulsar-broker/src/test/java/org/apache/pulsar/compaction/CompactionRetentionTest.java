@@ -19,12 +19,10 @@
 package org.apache.pulsar.compaction;
 
 import static org.testng.Assert.assertEquals;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -97,7 +95,7 @@ public class CompactionRetentionTest extends MockedPulsarServiceBaseTest {
     }
 
     /**
-     * Compaction should retain expired keys in the compacted view
+     * Compaction should retain expired keys in the compacted view.
      */
     @Test
     public void testCompaction() throws Exception {
@@ -202,6 +200,7 @@ public class CompactionRetentionTest extends MockedPulsarServiceBaseTest {
                 testCompactionCursorRetention(topic)
         );
     }
+    @SuppressWarnings("deprecation")
 
     @Test
     public void testCompactionRetentionOnTopicCreationWithTopicPolicies() throws Exception {
@@ -226,8 +225,8 @@ public class CompactionRetentionTest extends MockedPulsarServiceBaseTest {
         for (String eventTopic : SystemTopicNames.EVENTS_TOPIC_NAMES) {
             checkSystemTopicRetentionPolicy(topicPrefix + eventTopic);
         }
-        checkSystemTopicRetentionPolicy(topicPrefix + SystemTopicNames.TRANSACTION_COORDINATOR_ASSIGN);
-        checkSystemTopicRetentionPolicy(topicPrefix + SystemTopicNames.TRANSACTION_COORDINATOR_LOG);
+        // TRANSACTION_COORDINATOR_ASSIGN and TRANSACTION_COORDINATOR_LOG are only recognized as system
+        // topics when in the pulsar/system namespace (via startsWith check), so they are not tested here.
         checkSystemTopicRetentionPolicy(topicPrefix + SystemTopicNames.PENDING_ACK_STORE_SUFFIX);
 
         // Check common topics.
@@ -257,7 +256,8 @@ public class CompactionRetentionTest extends MockedPulsarServiceBaseTest {
         ManagedLedgerConfig config = pulsar.getBrokerService()
                 .getManagedLedgerConfig(TopicName.get(topicName)).get();
         Assert.assertEquals(config.getRetentionSizeInMB(), retentionPolicies.getRetentionSizeInMB());
-        Assert.assertEquals(config.getRetentionTimeMillis(),retentionPolicies.getRetentionTimeInMinutes() * 60000L);
+        Assert.assertEquals(config.getRetentionTimeMillis(),
+                retentionPolicies.getRetentionTimeInMinutes() * 60000L);
     }
 
     private void testCompactionCursorRetention(String topic) throws Exception {
@@ -300,8 +300,8 @@ public class CompactionRetentionTest extends MockedPulsarServiceBaseTest {
         validateMessages(pulsarClient, true, topic, round, allKeys);
     }
 
-    private void validateMessages(PulsarClient client, boolean readCompacted, String topic, int round, Set<String> expectedKeys)
-            throws Exception {
+    private void validateMessages(PulsarClient client, boolean readCompacted, String topic,
+                                  int round, Set<String> expectedKeys) throws Exception {
         @Cleanup
         Reader<Integer> reader = client.newReader(Schema.INT32)
                 .topic(topic)

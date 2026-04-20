@@ -90,6 +90,7 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
         conf.setTlsProtocols(tlsProtocols);
         conf.setNumExecutorThreadPoolSize(5);
     }
+    @SuppressWarnings("deprecation")
 
     protected void internalSetUpForClient(boolean addCertificates, String lookupUrl) throws Exception {
         if (pulsarClient != null) {
@@ -138,7 +139,7 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
 
     /**
      * verifies that messages whose size is larger than 2^14 bytes (max size of single TLS chunk) can be
-     * produced/consumed
+     * produced/consumed.
      *
      * @throws Exception
      */
@@ -146,9 +147,9 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
     public void testTlsLargeSizeMessage() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
-        final int MESSAGE_SIZE = 16 * 1024 + 1;
-        log.info("-- message size -- {}", MESSAGE_SIZE);
-        String topicName = "persistent://my-property/use/my-ns/testTlsLargeSizeMessage"
+        final int messageSize = 16 * 1024 + 1;
+        log.info("-- message size -- {}", messageSize);
+        String topicName = "persistent://my-property/my-ns/testTlsLargeSizeMessage"
                            + System.currentTimeMillis();
 
         internalSetUpForClient(true, pulsar.getBrokerServiceUrlTls());
@@ -160,7 +161,7 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
         Producer<byte[]> producer = pulsarClient.newProducer().topic(topicName)
                 .create();
         for (int i = 0; i < 10; i++) {
-            byte[] message = new byte[MESSAGE_SIZE];
+            byte[] message = new byte[messageSize];
             Arrays.fill(message, (byte) i);
             producer.send(message);
         }
@@ -168,7 +169,7 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
         Message<byte[]> msg = null;
         for (int i = 0; i < 10; i++) {
             msg = consumer.receive(5, TimeUnit.SECONDS);
-            byte[] expected = new byte[MESSAGE_SIZE];
+            byte[] expected = new byte[messageSize];
             Arrays.fill(expected, (byte) i);
             Assert.assertEquals(expected, msg.getData());
         }
@@ -182,9 +183,9 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
     public void testTlsClientAuthOverBinaryProtocol() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
-        final int MESSAGE_SIZE = 16 * 1024 + 1;
-        log.info("-- message size -- {}", MESSAGE_SIZE);
-        String topicName = "persistent://my-property/use/my-ns/testTlsClientAuthOverBinaryProtocol"
+        final int messageSize = 16 * 1024 + 1;
+        log.info("-- message size -- {}", messageSize);
+        String topicName = "persistent://my-property/my-ns/testTlsClientAuthOverBinaryProtocol"
                            + System.currentTimeMillis();
 
         internalSetUpForNamespace();
@@ -214,9 +215,9 @@ public class KeyStoreTlsProducerConsumerTestWithoutAuthTest extends ProducerCons
     public void testTlsClientAuthOverHTTPProtocol() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
-        final int MESSAGE_SIZE = 16 * 1024 + 1;
-        log.info("-- message size -- {}", MESSAGE_SIZE);
-        String topicName = "persistent://my-property/use/my-ns/testTlsClientAuthOverHTTPProtocol"
+        final int messageSize = 16 * 1024 + 1;
+        log.info("-- message size -- {}", messageSize);
+        String topicName = "persistent://my-property/my-ns/testTlsClientAuthOverHTTPProtocol"
                            + System.currentTimeMillis();
 
         internalSetUpForNamespace();

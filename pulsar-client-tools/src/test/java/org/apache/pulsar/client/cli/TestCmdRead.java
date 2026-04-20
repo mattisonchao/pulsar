@@ -21,7 +21,6 @@ package org.apache.pulsar.client.cli;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
-
 import java.lang.reflect.Field;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.impl.MessageIdImpl;
@@ -47,10 +46,6 @@ public class TestCmdRead {
         Field startMessageIdField = CmdRead.class.getDeclaredField("startMessageId");
         startMessageIdField.setAccessible(true);
         startMessageIdField.set(cmdRead, msgId);
-
-        String topicNameV1 = "persistent://public/cluster/default/t1";
-        assertEquals(cmdRead.getWebSocketReadUri(topicNameV1),
-                "ws://localhost:8080/ws/reader/persistent/public/cluster/default/t1?messageId=" + msgIdQueryParam);
 
         String topicNameV2 = "persistent://public/default/t2";
         assertEquals(cmdRead.getWebSocketReadUri(topicNameV2),

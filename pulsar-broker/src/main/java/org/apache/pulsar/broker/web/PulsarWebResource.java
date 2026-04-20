@@ -31,7 +31,6 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -77,7 +76,6 @@ import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.impl.PulsarServiceNameResolver;
-import org.apache.pulsar.common.naming.Constants;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceBundles;
 import org.apache.pulsar.common.naming.NamespaceName;
@@ -93,11 +91,12 @@ import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.apache.pulsar.common.policies.data.TenantOperation;
 import org.apache.pulsar.common.policies.data.TopicOperation;
 import org.apache.pulsar.common.policies.path.PolicyPath;
+import org.apache.pulsar.common.stats.CacheMetricsCollector;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.apache.pulsar.metadata.api.coordination.LockManager;
-import org.checkerframework.checker.nullness.qual.NonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -109,7 +108,7 @@ public abstract class PulsarWebResource {
     private static final Logger log = LoggerFactory.getLogger(PulsarWebResource.class);
 
     private static final LoadingCache<String, PulsarServiceNameResolver> SERVICE_NAME_RESOLVER_CACHE =
-            Caffeine.newBuilder().expireAfterAccess(Duration.ofMinutes(5)).build(
+            Caffeine.newBuilder().recordStats().expireAfterAccess(Duration.ofMinutes(5)).build(
                     new CacheLoader<>() {
                         @Override
                         public @Nullable PulsarServiceNameResolver load(@NonNull String serviceUrl) throws Exception {
@@ -118,6 +117,10 @@ public abstract class PulsarWebResource {
                             return serviceNameResolver;
                         }
                     });
+
+    static {
+        CacheMetricsCollector.CAFFEINE.addCache("web-resource-service-name-resolver", SERVICE_NAME_RESOLVER_CACHE);
+    }
 
     static final String ORIGINAL_PRINCIPAL_HEADER = "X-Original-Principal";
 
@@ -208,7 +211,11 @@ public abstract class PulsarWebResource {
                     isClientAuthenticated(appId), appId);
         }
         String originalPrincipal = originalPrincipal();
-        validateOriginalPrincipal(appId, originalPrincipal);
+        try {
+            validateOriginalPrincipal(appId, originalPrincipal);
+        } catch (RestException e) {
+            return FutureUtil.failedFuture(e);
+        }
 
         if (pulsar.getConfiguration().getProxyRoles().contains(appId)) {
             BrokerService brokerService = pulsar.getBrokerService();
@@ -525,7 +532,6 @@ public abstract class PulsarWebResource {
                                                                                      String clientAppId) {
         CompletableFuture<ClusterData> clusterDataFuture = new CompletableFuture<>();
         if (isValidCluster(pulsar, cluster)
-                // this code should only happen with a v1 namespace format prop/cluster/namespaces
                 || pulsar.getConfiguration().getClusterName().equals(cluster)) {
             clusterDataFuture.complete(null);
             return clusterDataFuture;
@@ -549,31 +555,13 @@ public abstract class PulsarWebResource {
         return clusterDataFuture;
     }
 
-    static boolean isValidCluster(PulsarService pulsarService, String cluster) {// If the cluster name is
-        // cluster == null or "global", don't validate the
-        // cluster ownership. Cluster will be null in v2 naming.
-        // The validation will be done by checking the namespace configuration
-        if (cluster == null || Constants.GLOBAL_CLUSTER.equals(cluster)) {
+    static boolean isValidCluster(PulsarService pulsarService, String cluster) {
+        if (cluster == null) {
             return true;
         }
 
         // Without authorization, any cluster name should be valid and accepted by the broker
         return !pulsarService.getConfiguration().isAuthorizationEnabled();
-    }
-
-    protected void validateBundleOwnership(String tenant, String cluster, String namespace, boolean authoritative,
-            boolean readOnly, NamespaceBundle bundle) {
-        NamespaceName fqnn = NamespaceName.get(tenant, cluster, namespace);
-
-        try {
-            validateBundleOwnership(bundle, authoritative, readOnly);
-        } catch (WebApplicationException wae) {
-            // propagate already wrapped-up WebApplicationExceptions
-            throw wae;
-        } catch (Exception oe) {
-            log.debug("Failed to find owner for namespace {}", fqnn, oe);
-            throw new RestException(oe);
-        }
     }
 
     protected NamespaceBundle validateNamespaceBundleRange(NamespaceName fqnn, BundlesData bundles,
@@ -734,7 +722,7 @@ public abstract class PulsarWebResource {
                                             .port(webUrl.get().getPort())
                                             .replaceQueryParam("authoritative", newAuthoritative);
                                     if (!ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)) {
-                                        uriBuilder.replaceQueryParam("destinationBroker", null);
+                                        uriBuilder.replaceQueryParam("destinationBroker", (Object[]) null);
                                     }
                                     URI redirect = uriBuilder.build();
                                     log.debug("{} is not a service unit owned", bundle);
@@ -885,7 +873,7 @@ public abstract class PulsarWebResource {
     public static CompletableFuture<ClusterDataImpl> checkLocalOrGetPeerReplicationCluster(PulsarService pulsarService,
                                                                                      NamespaceName namespace,
                                                                                      boolean allowDeletedNamespace) {
-        if (!namespace.isGlobal() || NamespaceService.isHeartbeatNamespace(namespace)) {
+        if (NamespaceService.isSLAOrHeartbeatNamespace(namespace.toString())) {
             return CompletableFuture.completedFuture(null);
         }
 
@@ -907,8 +895,7 @@ public abstract class PulsarWebResource {
                             localCluster, namespace.toString());
                     log.warn(msg);
                     validationFuture.completeExceptionally(new RestException(Status.PRECONDITION_FAILED, msg));
-                } else if (!policies.replication_clusters.contains(localCluster) && !policies.allowed_clusters
-                        .contains(localCluster)) {
+                } else if (!pulsarService.getBrokerService().isCurrentClusterAllowed(namespace, policies)) {
                     getOwnerFromPeerClusterListAsync(pulsarService, policies.replication_clusters,
                             policies.allowed_clusters)
                             .thenAccept(ownerPeerCluster -> {
@@ -982,14 +969,16 @@ public abstract class PulsarWebResource {
     }
 
     protected static CompletableFuture<Void> checkAuthorizationAsync(PulsarService pulsarService, TopicName topicName,
-                        String role, AuthenticationDataSource authenticationData) {
+                        String role, String originalPrinciple, AuthenticationDataSource authenticationData,
+                        AuthenticationDataSource originalAuthenticationData) {
         if (!pulsarService.getConfiguration().isAuthorizationEnabled()) {
             // No enforcing of authorization policies
             return CompletableFuture.completedFuture(null);
         }
         // get zk policy manager
         return pulsarService.getBrokerService().getAuthorizationService().allowTopicOperationAsync(topicName,
-                TopicOperation.LOOKUP, null, role, authenticationData).thenAccept(allow -> {
+                TopicOperation.LOOKUP, originalPrinciple, role, originalAuthenticationData, authenticationData)
+                .thenAccept(allow -> {
                     if (!allow) {
                         log.warn("[{}] Role {} is not allowed to lookup topic", topicName, role);
                         throw new RestException(Status.UNAUTHORIZED,
@@ -1012,7 +1001,7 @@ public abstract class PulsarWebResource {
         if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar)) {
             return true;
         }
-        return  pulsar.getLeaderElectionService().isLeader();
+        return pulsar.getLeaderElectionService() != null && pulsar.getLeaderElectionService().isLeader();
     }
 
     public void validateTenantOperation(String tenant, TenantOperation operation) {
@@ -1100,6 +1089,42 @@ public abstract class PulsarWebResource {
         return CompletableFuture.completedFuture(null);
     }
 
+    protected CompletableFuture<Void> canUpdateCluster(String tenant, Set<String> oldClusters,
+            Set<String> newClusters) {
+        // Check if any clusters are being removed
+        Set<String> removedClusters = new java.util.HashSet<>(oldClusters);
+        removedClusters.removeAll(newClusters);
+        if (removedClusters.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        // For each removed cluster, check if any namespace under this tenant references it
+        return tenantResources().getListOfNamespacesAsync(tenant)
+                .thenCompose(namespaces -> {
+                    java.util.List<CompletableFuture<Void>> checks = new java.util.ArrayList<>();
+                    for (String ns : namespaces) {
+                        NamespaceName namespaceName = NamespaceName.get(ns);
+                        CompletableFuture<Void> check = namespaceResources()
+                                .getPoliciesAsync(namespaceName)
+                                .thenAccept(policiesOpt -> {
+                                    if (policiesOpt.isPresent()) {
+                                        for (String cluster : removedClusters) {
+                                            if (policiesOpt.get().replication_clusters.contains(cluster)) {
+                                                throw new RestException(Status.PRECONDITION_FAILED,
+                                                        "Cannot remove cluster " + cluster
+                                                                + " from tenant " + tenant
+                                                                + ": namespace " + ns
+                                                                + " still has it as a replication cluster");
+                                            }
+                                        }
+                                    }
+                                });
+                        checks.add(check);
+                    }
+                    return FutureUtil.waitForAll(checks);
+                });
+    }
+
     protected PulsarResources getPulsarResources() {
         return pulsar().getPulsarResources();
     }
@@ -1181,31 +1206,6 @@ public abstract class PulsarWebResource {
         }
     }
 
-    protected CompletableFuture<Void> canUpdateCluster(String tenant, Set<String> oldClusters,
-            Set<String> newClusters) {
-        List<CompletableFuture<Void>> activeNamespaceFuture = new ArrayList<>();
-        for (String cluster : oldClusters) {
-            if (Constants.GLOBAL_CLUSTER.equals(cluster) || newClusters.contains(cluster)) {
-                continue;
-            }
-            CompletableFuture<Void> checkNs = new CompletableFuture<>();
-            activeNamespaceFuture.add(checkNs);
-            tenantResources().getActiveNamespaces(tenant, cluster).whenComplete((activeNamespaces, ex) -> {
-                if (ex != null) {
-                    log.warn("Failed to get namespaces under {}-{}, {}", tenant, cluster, ex.getCause().getMessage());
-                    checkNs.completeExceptionally(ex.getCause());
-                    return;
-                }
-                if (activeNamespaces.size() > 0) {
-                    log.warn("{}/{} Active-namespaces {}", tenant, cluster, activeNamespaces);
-                    checkNs.completeExceptionally(new RestException(Status.PRECONDITION_FAILED, "Active namespaces"));
-                    return;
-                }
-                checkNs.complete(null);
-            });
-        }
-        return FutureUtil.waitForAll(activeNamespaceFuture);
-    }
 
     /**
      * Redirect the call to the specified broker.

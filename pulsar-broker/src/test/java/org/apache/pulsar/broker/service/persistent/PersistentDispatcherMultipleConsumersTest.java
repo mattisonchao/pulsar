@@ -26,51 +26,35 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
-import org.apache.pulsar.broker.BrokerTestUtil;
 import org.apache.pulsar.broker.service.Dispatcher;
+import org.apache.pulsar.broker.service.SharedPulsarBaseTest;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
-import org.apache.pulsar.client.api.ProducerConsumerBase;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.awaitility.reflect.WhiteboxImpl;
 import org.mockito.Mockito;
 import org.testng.Assert;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 @Slf4j
 @Test(groups = "broker-api")
-public class PersistentDispatcherMultipleConsumersTest extends ProducerConsumerBase {
-
-    @BeforeClass(alwaysRun = true)
-    @Override
-    protected void setup() throws Exception {
-        super.internalSetup();
-        super.producerBaseSetup();
-    }
-
-    @AfterClass(alwaysRun = true)
-    @Override
-    protected void cleanup() throws Exception {
-        super.internalCleanup();
-    }
+public class PersistentDispatcherMultipleConsumersTest extends SharedPulsarBaseTest {
 
     @Test(timeOut = 30 * 1000)
     public void testTopicDeleteIfConsumerSetMismatchConsumerList() throws Exception {
-        final String topicName = BrokerTestUtil.newUniqueName("persistent://public/default/tp");
+        final String topicName = newTopicName();
         final String subscription = "s1";
         admin.topics().createNonPartitionedTopic(topicName);
         admin.topics().createSubscription(topicName, subscription, MessageId.earliest);
 
-        Consumer<String> consumer = pulsarClient.newConsumer(Schema.STRING).topic(topicName).subscriptionName(subscription)
+        Consumer<String> consumer = pulsarClient.newConsumer(Schema.STRING)
+                .topic(topicName).subscriptionName(subscription)
                 .subscriptionType(SubscriptionType.Shared).subscribe();
         // Make an error that "consumerSet" is mismatch with "consumerList".
-        Dispatcher dispatcher = pulsar.getBrokerService()
-                .getTopic(topicName, false).join().get()
+        Dispatcher dispatcher = getTopic(topicName, false).join().get()
                 .getSubscription(subscription).getDispatcher();
         ObjectSet<org.apache.pulsar.broker.service.Consumer> consumerSet =
                 WhiteboxImpl.getInternalState(dispatcher, "consumerSet");
@@ -88,16 +72,16 @@ public class PersistentDispatcherMultipleConsumersTest extends ProducerConsumerB
 
     @Test(timeOut = 30 * 1000)
     public void testTopicDeleteIfConsumerSetMismatchConsumerList2() throws Exception {
-        final String topicName = BrokerTestUtil.newUniqueName("persistent://public/default/tp");
+        final String topicName = newTopicName();
         final String subscription = "s1";
         admin.topics().createNonPartitionedTopic(topicName);
         admin.topics().createSubscription(topicName, subscription, MessageId.earliest);
 
-        Consumer<String> consumer = pulsarClient.newConsumer(Schema.STRING).topic(topicName).subscriptionName(subscription)
+        Consumer<String> consumer = pulsarClient.newConsumer(Schema.STRING)
+                .topic(topicName).subscriptionName(subscription)
                 .subscriptionType(SubscriptionType.Shared).subscribe();
         // Make an error that "consumerSet" is mismatch with "consumerList".
-        Dispatcher dispatcher = pulsar.getBrokerService()
-                .getTopic(topicName, false).join().get()
+        Dispatcher dispatcher = getTopic(topicName, false).join().get()
                 .getSubscription(subscription).getDispatcher();
         ObjectSet<org.apache.pulsar.broker.service.Consumer> consumerSet =
                 WhiteboxImpl.getInternalState(dispatcher, "consumerSet");
@@ -110,8 +94,7 @@ public class PersistentDispatcherMultipleConsumersTest extends ProducerConsumerB
 
     @Test
     public void testSkipReadEntriesFromCloseCursor() throws Exception {
-        final String topicName =
-                BrokerTestUtil.newUniqueName("persistent://public/default/testSkipReadEntriesFromCloseCursor");
+        final String topicName = newTopicName();
         final String subscription = "s1";
         admin.topics().createNonPartitionedTopic(topicName);
 
@@ -123,8 +106,7 @@ public class PersistentDispatcherMultipleConsumersTest extends ProducerConsumerB
         producer.close();
 
         // Get the dispatcher of the topic.
-        PersistentTopic topic = (PersistentTopic) pulsar.getBrokerService()
-                .getTopic(topicName, false).join().get();
+        PersistentTopic topic = (PersistentTopic) getTopic(topicName, false).join().get();
 
         ManagedCursor cursor = Mockito.mock(ManagedCursorImpl.class);
         Mockito.doReturn(subscription).when(cursor).getName();
@@ -163,7 +145,8 @@ public class PersistentDispatcherMultipleConsumersTest extends ProducerConsumerB
 
         dispatcher.readMoreEntries();
 
-        // Verify: the readEntriesFailed should be called once and the scheduleReadEntriesWithDelay should not be called.
+        // Verify: the readEntriesFailed should be called once and
+        // the scheduleReadEntriesWithDelay should not be called.
         Assert.assertTrue(callReadEntriesFailed.get() == 1 && callScheduleReadEntriesWithDelayCnt.get() == 0);
 
         // Verify: the topic can be deleted successfully.

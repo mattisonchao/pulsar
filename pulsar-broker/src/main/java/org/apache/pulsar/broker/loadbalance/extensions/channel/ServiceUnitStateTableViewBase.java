@@ -43,23 +43,18 @@ abstract class ServiceUnitStateTableViewBase implements ServiceUnitStateTableVie
     private final Map<NamespaceBundle, Boolean> ownedServiceUnitsMap = new ConcurrentHashMap<>();
     private final Set<NamespaceBundle> ownedServiceUnits = Collections.unmodifiableSet(ownedServiceUnitsMap.keySet());
     private String brokerId;
-    private PulsarService pulsar;
+    protected PulsarService pulsar;
     protected void init(PulsarService pulsar) throws MetadataStoreException {
         this.pulsar = pulsar;
         this.brokerId = pulsar.getBrokerId();
         // Add heartbeat and SLA monitor namespace bundle.
         NamespaceName heartbeatNamespace =
                 NamespaceService.getHeartbeatNamespace(brokerId, pulsar.getConfiguration());
-        NamespaceName heartbeatNamespaceV2 = NamespaceService
-                .getHeartbeatNamespaceV2(brokerId, pulsar.getConfiguration());
         NamespaceName slaMonitorNamespace = NamespaceService
                 .getSLAMonitorNamespace(brokerId, pulsar.getConfiguration());
         try {
             pulsar.getNamespaceService().getNamespaceBundleFactory()
                     .getFullBundleAsync(heartbeatNamespace)
-                    .thenAccept(fullBundle -> ownedServiceUnitsMap.put(fullBundle, true))
-                    .thenCompose(__ -> pulsar.getNamespaceService().getNamespaceBundleFactory()
-                            .getFullBundleAsync(heartbeatNamespaceV2))
                     .thenAccept(fullBundle -> ownedServiceUnitsMap.put(fullBundle, true))
                     .thenCompose(__ -> pulsar.getNamespaceService().getNamespaceBundleFactory()
                             .getFullBundleAsync(slaMonitorNamespace))
@@ -88,5 +83,10 @@ abstract class ServiceUnitStateTableViewBase implements ServiceUnitStateTableVie
                 return null;
             }
         });
+    }
+
+    protected void invalidateOwnedServiceUnits(String key, ServiceUnitStateData outdatedVal) {
+        NamespaceBundle namespaceBundle = LoadManagerShared.getNamespaceBundle(pulsar, key);
+        ownedServiceUnitsMap.compute(namespaceBundle, (k, v) -> false);
     }
 }

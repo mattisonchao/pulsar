@@ -19,12 +19,16 @@
 package org.apache.pulsar.client.impl;
 
 import io.netty.channel.EventLoopGroup;
+import io.netty.resolver.NameResolver;
+import io.netty.util.Timer;
 import io.opentelemetry.api.common.Attributes;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import org.apache.commons.lang3.StringUtils;
@@ -57,18 +61,24 @@ public class HttpLookupService implements LookupService {
     private final boolean useTls;
     private final String listenerName;
 
-    private static final String BasePathV1 = "lookup/v2/destination/";
-    private static final String BasePathV2 = "lookup/v2/topic/";
+    private static final String BasePath = "lookup/v2/topic/";
 
     private final LatencyHistogram histoGetBroker;
     private final LatencyHistogram histoGetTopicMetadata;
     private final LatencyHistogram histoGetSchema;
     private final LatencyHistogram histoListTopics;
 
+    @Deprecated
     public HttpLookupService(InstrumentProvider instrumentProvider, ClientConfigurationData conf,
-                             EventLoopGroup eventLoopGroup)
+                             EventLoopGroup eventLoopGroup) throws PulsarClientException {
+        this(instrumentProvider, conf, eventLoopGroup, null, null);
+    }
+
+    public HttpLookupService(InstrumentProvider instrumentProvider, ClientConfigurationData conf,
+                             EventLoopGroup eventLoopGroup, Timer timer,
+                             NameResolver<InetAddress> nameResolver)
             throws PulsarClientException {
-        this.httpClient = new HttpClient(conf, eventLoopGroup);
+        this.httpClient = new HttpClient(conf, eventLoopGroup, timer, nameResolver);
         this.useTls = conf.isUseTls();
         this.listenerName = conf.getListenerName();
 
@@ -93,11 +103,17 @@ public class HttpLookupService implements LookupService {
      * @param topicName topic-name
      * @return broker-socket-address that serves given topic
      */
-    @Override
     @SuppressWarnings("deprecation")
-    public CompletableFuture<LookupTopicResult> getBroker(TopicName topicName) {
-        String basePath = topicName.isV2() ? BasePathV2 : BasePathV1;
-        String path = basePath + topicName.getLookupName();
+    @Override
+    public CompletableFuture<LookupTopicResult> getBroker(TopicName topicName, Map<String, String> lookupProperties) {
+        if (lookupProperties == null) {
+            lookupProperties = httpClient.clientConf.getLookupProperties();
+        }
+        if (lookupProperties != null && !lookupProperties.isEmpty()) {
+            log.warn("Lookup properties aren't supported for http lookup service. lookupProperties: {}",
+                    lookupProperties);
+        }
+        String path = BasePath + topicName.getLookupName();
         path = StringUtils.isBlank(listenerName) ? path : path + "?listenerName=" + Codec.encode(listenerName);
 
         long startTime = System.nanoTime();
@@ -144,7 +160,7 @@ public class HttpLookupService implements LookupService {
             TopicName topicName, boolean metadataAutoCreationEnabled, boolean useFallbackForNonPIP344Brokers) {
         long startTime = System.nanoTime();
 
-        String format = topicName.isV2() ? "admin/v2/%s/partitions" : "admin/%s/partitions";
+        String format = "admin/v2/%s/partitions";
         CompletableFuture<PartitionedTopicMetadata> httpFuture =  httpClient.get(
                 String.format(format, topicName.getLookupName()) + "?checkAllowAutoCreation="
                         + metadataAutoCreationEnabled,
@@ -172,13 +188,13 @@ public class HttpLookupService implements LookupService {
 
     @Override
     public CompletableFuture<GetTopicsResult> getTopicsUnderNamespace(NamespaceName namespace, Mode mode,
-                                                                      String topicsPattern, String topicsHash) {
+                                                                      String topicsPattern, String topicsHash,
+                                                                      Map<String, String> properties) {
         long startTime = System.nanoTime();
 
         CompletableFuture<GetTopicsResult> future = new CompletableFuture<>();
 
-        String format = namespace.isV2()
-            ? "admin/v2/namespaces/%s/topics?mode=%s" : "admin/namespaces/%s/destinations?mode=%s";
+        String format = "admin/v2/namespaces/%s/topics?mode=%s";
         httpClient
             .get(String.format(format, namespace, mode.toString()), String[].class)
             .thenAccept(topics -> {
@@ -201,8 +217,8 @@ public class HttpLookupService implements LookupService {
     }
 
     @Override
-    public CompletableFuture<Optional<SchemaInfo>> getSchema(TopicName topicName) {
-        return getSchema(topicName, null);
+    public boolean isBinaryProtoLookupService() {
+        return false;
     }
 
     @Override

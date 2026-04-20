@@ -18,6 +18,8 @@
  */
 package org.apache.pulsar.client.api;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.testng.Assert.assertEquals;
 import com.google.common.collect.Sets;
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -43,9 +45,6 @@ import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
-
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.testng.Assert.assertEquals;
 
 /**
  * Test Mutual Authentication.
@@ -90,6 +89,7 @@ public class MutualAuthenticationTest extends ProducerConsumerBase {
             return toSend;
         }
     }
+    @SuppressWarnings("deprecation")
 
     public static class MutualAuthentication implements Authentication {
         @Override
@@ -121,6 +121,7 @@ public class MutualAuthenticationTest extends ProducerConsumerBase {
             // noop
         }
     }
+    @SuppressWarnings("deprecation")
 
 
     public static class MutualAuthenticationState implements AuthenticationState {
@@ -160,6 +161,7 @@ public class MutualAuthenticationTest extends ProducerConsumerBase {
             return isComplete;
         }
     }
+    @SuppressWarnings("deprecation")
 
     public static class MutualAuthenticationProvider implements AuthenticationProvider {
         @Override

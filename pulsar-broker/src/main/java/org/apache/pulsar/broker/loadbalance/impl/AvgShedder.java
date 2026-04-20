@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -190,7 +191,7 @@ public class AvgShedder implements LoadSheddingStrategy, ModularLoadManagerStrat
         ).forEach(e -> {
             Map.Entry<String, BundleData> bundle = e.getLeft();
             double traffic = e.getRight();
-            if (traffic > 0 && traffic <= trafficMarkedToOffload.getValue()) {
+            if (traffic > 0 && traffic <= trafficMarkedToOffload.doubleValue()) {
                 selectedBundlesCache.put(overloadedBroker, bundle.getKey());
                 bundleBrokerMap.put(bundle.getValue(), underloadedBroker);
                 trafficMarkedToOffload.add(-traffic);
@@ -224,7 +225,7 @@ public class AvgShedder implements LoadSheddingStrategy, ModularLoadManagerStrat
         }
 
         // sort brokers by scores.
-        return brokerScoreMap.entrySet().stream().sorted((o1, o2) -> (int) (o1.getValue() - o2.getValue()))
+        return brokerScoreMap.entrySet().stream().sorted(Comparator.comparingDouble(Map.Entry::getValue))
                 .map(Map.Entry::getKey).toList();
     }
 

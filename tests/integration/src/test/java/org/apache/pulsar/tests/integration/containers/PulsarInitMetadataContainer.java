@@ -25,7 +25,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 
 /**
- * Initialize the Pulsar metadata
+ * Initialize the Pulsar metadata.
  */
 @Slf4j
 public class PulsarInitMetadataContainer extends GenericContainer<PulsarInitMetadataContainer> {
@@ -37,6 +37,7 @@ public class PulsarInitMetadataContainer extends GenericContainer<PulsarInitMeta
     private final String configurationMetadataStoreUrl;
     private final String brokerHostname;
 
+    @SuppressWarnings("deprecation")
     public PulsarInitMetadataContainer(Network network,
                                        String clusterName,
                                        String metadataStoreUrl,
